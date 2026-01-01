@@ -1,0 +1,108 @@
+﻿import subprocess
+import os
+import logging
+import platform
+from PyQt5.QtCore import QThread, pyqtSignal
+
+class FFmpegBuilder:
+    def __init__(self, timeline_state, output_path, resolution_mode="Landscape 1080p"):
+        self.state = timeline_state
+        self.out = output_path
+        self.mode = resolution_mode
+        self.res_map = {
+            "Landscape 1920x1080 (HD)": (1920, 1080),
+            "Landscape 3840x2160 (4K)": (3840, 2160),
+            "Portrait 1080x1920 (Mobile HD)": (1080, 1920),
+            "Portrait 1440x2560 (Mobile QHD)": (1440, 2560)
+        }
+        self.width, self.height = self.res_map.get(resolution_mode, (1920, 1080))
+
+    def build_cmd(self, encoder="libx264"):
+        inputs = []
+        filter_complex = []
+        file_map = {}
+        input_args = []
+        all_clips = []
+        for track_idx, track in enumerate(self.state):
+            for clip in track['clips']:
+                clip['track'] = track_idx
+                all_clips.append(clip)
+                if clip['path'] not in file_map:
+                    file_map[clip['path']] = len(inputs)
+                    inputs.append(clip['path'])
+                    input_args.extend(['-i', clip['path']])
+        total_dur = max([c['start'] + c['dur'] for c in all_clips]) if all_clips else 10
+        filter_complex.append(f"color=c=black:s={self.width}x{self.height}:d={total_dur:.3f}[base]")
+        last_layer = "[base]"
+        all_clips.sort(key=lambda x: (x['track'], x['start']))
+        for i, clip in enumerate(all_clips):
+            inp_idx = file_map[clip['path']]
+            lbl = f"v{i}"
+            pts_speed = 1.0 / clip['speed']
+            f_chain = [
+                f"[{inp_idx}:v]trim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}",
+                "setpts=PTS-STARTPTS",
+                f"setpts=PTS*{pts_speed}"
+            ]
+            w, h = self.width, self.height
+            f_chain.append(f"scale={w}:{h}:force_original_aspect_ratio=increase")
+            f_chain.append(f"crop={w}:{h}")
+            f_chain.append(f"setsar=1[{lbl}_pre]")
+            start_t = clip['start']
+            end_t = start_t + clip['dur']
+            next_layer = f"[bg{i}]"
+            overlay_filter = (
+                f"{last_layer}[{lbl}_pre]overlay="
+                f"enable='between(t,{start_t},{end_t})':"
+                f"eof_action=pass[{next_layer}]"
+            )
+            filter_complex.append(",".join(f_chain))
+            filter_complex.append(overlay_filter)
+            last_layer = next_layer
+        cmd = ['ffmpeg', '-y'] + input_args
+        cmd.extend(['-filter_complex', ";".join(filter_complex)])
+        cmd.extend(['-map', last_layer])
+        if "nvenc" in encoder:
+            cmd.extend(['-c:v', encoder, '-preset', 'p4', '-rc', 'vbr'])
+        elif "amf" in encoder:
+             cmd.extend(['-c:v', encoder, '-usage', 'transcoding'])
+        else:
+            cmd.extend(['-c:v', 'libx264', '-preset', 'medium', '-crf', '23'])
+        cmd.append(self.out)
+        return cmd
+
+class RenderWorker(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, builder, parent=None):
+        super().__init__(parent)
+        self.builder = builder
+        self.logger = logging.getLogger("ProEditor")
+
+    def detect_hw(self):
+        check = lambda enc: subprocess.call(['ffmpeg', '-v', 'quiet', '-f', 'lavfi', '-i', 'color', '-c:v', enc, '-t', '1', '-f', 'null', '-']) == 0
+        if check('h264_nvenc'): return 'h264_nvenc'
+        if check('h264_amf'): return 'h264_amf'
+        if check('h264_qsv'): return 'h264_qsv'
+        return 'libx264'
+
+    def run(self):
+        try:
+            enc = self.detect_hw()
+            self.logger.info(f"Selected Encoder: {enc}")
+            cmd = self.builder.build_cmd(enc)
+            self.logger.info(f"CMD: {' '.join(cmd)}")
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, startupinfo=si)
+            for line in proc.stdout:
+                if "time=" in line:
+                    self.progress.emit(50) 
+            if proc.wait() == 0:
+                self.finished.emit()
+            else:
+                self.error.emit("Render exited with error code.")
+        except Exception as e:
+            self.error.emit(str(e))

@@ -1,0 +1,56 @@
+import sys
+import os
+import logging
+import json
+import threading
+from logging.handlers import RotatingFileHandler
+
+class StreamToLogger:
+    """Redirects stdout/stderr to the logger."""
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.level, line.rstrip())
+    def flush(self): pass
+
+def setup_system(base_dir):
+    log_dir = os.path.abspath(os.path.join(base_dir, '..', 'logs'))
+    os.makedirs(log_dir, exist_ok=True)
+    fmt = logging.Formatter('%(asctime)s | %(name)-10s | %(levelname)-8s | %(message)s')
+    logger = logging.getLogger("AdvEditor")
+    logger.setLevel(logging.DEBUG)
+    f_path = os.path.join(log_dir, 'Advanced_Video_Editor.log')
+    f_handler = RotatingFileHandler(f_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+    f_handler.setFormatter(fmt)
+    logger.addHandler(f_handler)
+    c_handler = logging.StreamHandler()
+    c_handler.setLevel(logging.INFO)
+    c_handler.setFormatter(fmt)
+    logger.addHandler(c_handler)
+    return logger
+
+class ConfigManager:
+    def __init__(self, path):
+        self.path = path
+        self.data = {}
+        self.lock = threading.Lock()
+        self.load()
+
+    def load(self):
+        with self.lock:
+            if os.path.exists(self.path):
+                try:
+                    with open(self.path, 'r') as f: self.data = json.load(f)
+                except: self.data = {}
+
+    def save(self):
+        with self.lock:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            with open(self.path, 'w') as f: json.dump(self.data, f, indent=4)
+
+    def get(self, k, default=None): return self.data.get(k, default)
+    def set(self, k, v):
+        self.data[k] = v
+        self.save()
