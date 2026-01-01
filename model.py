@@ -10,13 +10,30 @@ class ClipModel:
     speed: float = 1.0
     volume: float = 100.0
     name: str = "Untitled"
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    pos_x: float = 0.0
+    pos_y: float = 0.0
+    width: int = 1920
+    height: int = 1080
+    bitrate: int = 0
+    crop_x1: float = 0.0
+    crop_y1: float = 0.0
+    crop_x2: float = 1.0
+    crop_y2: float = 1.0
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_dict(self):
         return {
             'uid': self.uid, 'path': self.path, 'name': self.name,
             'track': self.track, 'start': self.start, 'dur': self.duration,
-            'source_in': self.source_in, 'speed': self.speed, 'volume': self.volume
+            'source_in': self.source_in, 'speed': self.speed, 'volume': self.volume,
+            'scale_x': self.scale_x, 'scale_y': self.scale_y,
+            'pos_x': self.pos_x, 'pos_y': self.pos_y,
+            'width': self.width, 'height': self.height,
+            'bitrate': self.bitrate,
+            'crop_x1': self.crop_x1, 'crop_y1': self.crop_y1,
+            'crop_x2': self.crop_x2, 'crop_y2': self.crop_y2
         }
     @staticmethod
     def from_dict(data):
@@ -31,4 +48,15 @@ class ClipModel:
         m.source_in = data.get('source_in', 0.0)
         m.speed = data.get('speed', 1.0)
         m.volume = data.get('volume', 100.0)
+        m.scale_x = data.get('scale_x', 1.0)
+        m.scale_y = data.get('scale_y', 1.0)
+        m.pos_x = data.get('pos_x', 0.0)
+        m.pos_y = data.get('pos_y', 0.0)
+        m.width = data.get('width', 1920)
+        m.height = data.get('height', 1080)
+        m.bitrate = data.get('bitrate', 0)
+        m.crop_x1 = data.get('crop_x1', 0.0)
+        m.crop_y1 = data.get('crop_y1', 0.0)
+        m.crop_x2 = data.get('crop_x2', 1.0)
+        m.crop_y2 = data.get('crop_y2', 1.0)
         return m

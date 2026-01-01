@@ -1,7 +1,17 @@
 ﻿import os
+import sys
 import logging
 from PyQt5.QtWidgets import QFrame
-os.environ["PATH"] = os.path.dirname(os.path.abspath(__file__)) + os.pathsep + os.environ["PATH"]
+
+# Add local binaries folder to path for libmpv
+bin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'binaries')
+
+# Explicitly add the binaries path to the system's PATH
+os.environ['PATH'] = bin_path + os.pathsep + os.environ['PATH']
+
+# Also set MPV_HOME, which the python-mpv library might use
+os.environ['MPV_HOME'] = bin_path
+
 import mpv
 class MPVPlayer(QFrame):
     def __init__(self, parent=None):
@@ -49,9 +59,13 @@ class MPVPlayer(QFrame):
     def set_volume(self, vol):
         self.mpv.volume = int(vol)
 
-    def apply_crop(self, crop_dict):
-        if crop_dict:
-            vf_str = f"crop={crop_dict['w']}:{crop_dict['h']}:{crop_dict['x']}:{crop_dict['y']}"
+    def apply_crop(self, clip_model):
+        if clip_model and (clip_model.crop_x1 != 0.0 or clip_model.crop_y1 != 0.0 or clip_model.crop_x2 != 1.0 or clip_model.crop_y2 != 1.0):
+            w = clip_model.width * (clip_model.crop_x2 - clip_model.crop_x1)
+            h = clip_model.height * (clip_model.crop_y2 - clip_model.crop_y1)
+            x = clip_model.width * clip_model.crop_x1
+            y = clip_model.height * clip_model.crop_y1
+            vf_str = f"crop={w}:{h}:{x}:{y}"
             self.mpv.vf = vf_str
         else:
             self.mpv.vf = ""

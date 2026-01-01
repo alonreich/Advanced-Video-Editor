@@ -5,54 +5,54 @@ import platform
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class FFmpegBuilder:
-    def __init__(self, timeline_state, output_path, resolution_mode="Landscape 1080p"):
-        self.state = timeline_state
+    def __init__(self, all_clips, output_path, resolution_mode="Landscape 1080p"):
+        self.all_clips = all_clips
         self.out = output_path
         self.mode = resolution_mode
-        self.res_map = {
-            "Landscape 1920x1080 (HD)": (1920, 1080),
-            "Landscape 3840x2160 (4K)": (3840, 2160),
-            "Portrait 1080x1920 (Mobile HD)": (1080, 1920),
-            "Portrait 1440x2560 (Mobile QHD)": (1440, 2560)
-        }
-        self.width, self.height = self.res_map.get(resolution_mode, (1920, 1080))
-
+# ... existing code ...
     def build_cmd(self, encoder="libx264"):
         inputs = []
         filter_complex = []
         file_map = {}
         input_args = []
-        all_clips = []
-        for track_idx, track in enumerate(self.state):
-            for clip in track['clips']:
-                clip['track'] = track_idx
-                all_clips.append(clip)
-                if clip['path'] not in file_map:
-                    file_map[clip['path']] = len(inputs)
-                    inputs.append(clip['path'])
-                    input_args.extend(['-i', clip['path']])
-        total_dur = max([c['start'] + c['dur'] for c in all_clips]) if all_clips else 10
+        for clip in self.all_clips:
+            if clip['path'] not in file_map:
+                file_map[clip['path']] = len(inputs)
+                inputs.append(clip['path'])
+                input_args.extend(['-i', clip['path']])
+        total_dur = max([c['start'] + c['dur'] for c in self.all_clips]) if self.all_clips else 10
         filter_complex.append(f"color=c=black:s={self.width}x{self.height}:d={total_dur:.3f}[base]")
         last_layer = "[base]"
-        all_clips.sort(key=lambda x: (x['track'], x['start']))
-        for i, clip in enumerate(all_clips):
+        self.all_clips.sort(key=lambda x: (x['track'], x['start']))
+        for i, clip in enumerate(self.all_clips):
             inp_idx = file_map[clip['path']]
-            lbl = f"v{i}"
-            pts_speed = 1.0 / clip['speed']
+# ... existing code ...
             f_chain = [
                 f"[{inp_idx}:v]trim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}",
                 "setpts=PTS-STARTPTS",
                 f"setpts=PTS*{pts_speed}"
             ]
-            w, h = self.width, self.height
-            f_chain.append(f"scale={w}:{h}:force_original_aspect_ratio=increase")
-            f_chain.append(f"crop={w}:{h}")
+            
+            # Crop
+            crop = clip.get('crop_x2', 1.0) - clip.get('crop_x1', 0.0) < 1.0 or clip.get('crop_y2', 1.0) - clip.get('crop_y1', 0.0) < 1.0
+            if crop:
+                f_chain.append(f"crop=iw*({clip['crop_x2']}-{clip['crop_x1']}):ih*({clip['crop_y2']}-{clip['crop_y1']}):iw*{clip['crop_x1']}:ih*{clip['crop_y1']}")
+
+            # Scale
+            f_chain.append(f"scale={self.width}*{clip['scale_x']}:{self.height}*{clip['scale_y']}")
+
             f_chain.append(f"setsar=1[{lbl}_pre]")
             start_t = clip['start']
             end_t = start_t + clip['dur']
             next_layer = f"[bg{i}]"
+            
+            # Position
+            x_pos = (self.width - self.width * clip['scale_x']) / 2 + self.width * clip['pos_x']
+            y_pos = (self.height - self.height * clip['scale_y']) / 2 - self.height * clip['pos_y']
+
             overlay_filter = (
                 f"{last_layer}[{lbl}_pre]overlay="
+                f"x={x_pos}:y={y_pos}:"
                 f"enable='between(t,{start_t},{end_t})':"
                 f"eof_action=pass[{next_layer}]"
             )

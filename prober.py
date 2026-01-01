@@ -27,6 +27,7 @@ class ProbeWorker(QThread):
             info = {
                 'path': self.path,
                 'duration': float(data['format'].get('duration', 0)),
+                'bitrate': int(data['format'].get('bit_rate', 0)),
                 'width': 0,
                 'height': 0,
                 'has_audio': False,
@@ -46,11 +47,13 @@ class ProbeWorker(QThread):
 class WaveformWorker(QThread):
     finished = pyqtSignal(str, str)
 
-    def __init__(self, audio_path, uid, assets_dir):
+    def __init__(self, audio_path, uid, project_dir):
         super().__init__()
         self.path = audio_path
         self.uid = uid
-        self.out = os.path.join(assets_dir, f"{uid}_wave.png")
+        cache_dir = os.path.join(project_dir, "cache", "waveforms")
+        os.makedirs(cache_dir, exist_ok=True)
+        self.out = os.path.join(cache_dir, f"{uid}.png")
 
     def run(self):
         if os.path.exists(self.out):
