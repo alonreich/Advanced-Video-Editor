@@ -1,4 +1,6 @@
 __pycache__/
+cache/
+projects/
 *.mp4
 *.mp3
 !mp3/Cool Dance Background Music (No CopyRights).mp3

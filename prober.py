@@ -1,6 +1,8 @@
 ﻿import subprocess
 import json
 import os
+import traceback
+import logging
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class ProbeWorker(QThread):
@@ -42,6 +44,7 @@ class ProbeWorker(QThread):
                     info['has_audio'] = True
             self.result.emit(info)
         except Exception as e:
+            logging.getLogger("Advanced_Video_Editor").error(f"Probe Failed:\n{traceback.format_exc()}")
             self.result.emit({'error': str(e)})
 
 class WaveformWorker(QThread):
@@ -61,12 +64,12 @@ class WaveformWorker(QThread):
             return
         cmd = [
             'ffmpeg', '-y', '-i', self.path,
-            '-filter_complex', 'showwavespic=s=600x100:colors=cyan',
+            '-filter_complex', 'showwavespic=s=600x100:colors=#00FFFF|#0088FF:split_channels=1',
             '-frames:v', '1',
             self.out
         ]
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             self.finished.emit(self.uid, self.out)
-        except:
-            pass
+        except Exception:
+            logging.getLogger("Advanced_Video_Editor").error(f"Waveform Generation Failed for {self.path}:\n{traceback.format_exc()}")

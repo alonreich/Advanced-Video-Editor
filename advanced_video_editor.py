@@ -1,15 +1,38 @@
-import sys
+﻿import sys
 import os
+import logging
+import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from system import setup_system
 from main_window import MainWindow
+
+class StreamToLogger:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+        self.linebuf = ''
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.level, line.rstrip())
+
+    def flush(self):
+        pass
+
+def exception_hook(exctype, value, tb):
+    err_msg = "".join(traceback.format_exception(exctype, value, tb))
+    logging.getLogger("Advanced_Video_Editor").critical(f"Uncaught Exception:\n{err_msg}")
+    sys.__excepthook__(exctype, value, tb)
 if __name__ == "__main__":
+    sys.excepthook = exception_hook
     base_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, base_dir)
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     logger = setup_system(base_dir)
-    logger.info("=== Booting ProEditor v2.0 (Semi-Pro) ===")
+    sys.stdout = StreamToLogger(logger, logging.INFO)
+    sys.stderr = StreamToLogger(logger, logging.ERROR)
+    logger.info("=== Booting Advanced Video Editor ===")
     try:
         app = QApplication(sys.argv)
         app.setStyle("Fusion")

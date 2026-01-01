@@ -1,42 +1,68 @@
-import subprocess
+﻿import subprocess
 import os
+import traceback
+import logging
+import queue
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class ThumbnailWorker(QThread):
-    finished = pyqtSignal(str, str, str)
+    thumbnail_generated = pyqtSignal(str, str, str)
 
-    def __init__(self, video_path, uid, project_dir):
+    def __init__(self, project_dir):
         super().__init__()
-        self.path = video_path
-        self.uid = uid
-        cache_dir = os.path.join(project_dir, "cache", "thumbnails")
-        os.makedirs(cache_dir, exist_ok=True)
-        self.out_start = os.path.join(cache_dir, f"{uid}_start.png")
-        self.out_end = os.path.join(cache_dir, f"{uid}_end.png")
+        self.project_dir = project_dir
+        self.queue = queue.Queue()
+        self.running = True
+        self.logger = logging.getLogger("Advanced_Video_Editor")
+
+    def add_task(self, path, uid, duration):
+        self.queue.put({'path': path, 'uid': uid, 'dur': duration})
+
+    def stop(self):
+        self.running = False
+        self.queue.put(None)
 
     def run(self):
-        if not os.path.exists(self.out_start):
-            cmd_start = [
-                'ffmpeg', '-y', '-i', self.path,
-                '-vframes', '1',
-                self.out_start
-            ]
+        while self.running:
             try:
-                subprocess.run(cmd_start, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                task = self.queue.get()
+                if task is None: 
+                    break
+                self.process_task(task)
+                self.queue.task_done()
             except Exception as e:
-                print(f"Error generating start thumbnail: {e}")
-                self.out_start = None
+                self.logger.error(f"Thumbnail Queue Error: {e}")
 
-        if not os.path.exists(self.out_end):
-            cmd_end = [
-                'ffmpeg', '-y', '-sseof', '-1', '-i', self.path,
-                '-vframes', '1',
-                self.out_end
+    def process_task(self, task):
+        uid = task['uid']
+        path = task['path']
+        dur = task['dur']
+        cache_dir = os.path.join(self.project_dir, "cache", "thumbnails")
+        os.makedirs(cache_dir, exist_ok=True)
+        out_start = os.path.join(cache_dir, f"{uid}_start.jpg")
+        out_end = os.path.join(cache_dir, f"{uid}_end.jpg")
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        if not os.path.exists(out_start):
+            cmd = [
+                'ffmpeg', '-y', '-ss', '0', '-i', path,
+                '-vf', 'scale=-2:120', '-vframes', '1', '-q:v', '5', 
+                out_start
             ]
-            try:
-                subprocess.run(cmd_end, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception as e:
-                print(f"Error generating end thumbnail: {e}")
-                self.out_end = None
-        
-        self.finished.emit(self.uid, self.out_start, self.out_end)
+            self.run_ffmpeg(cmd, si)
+        if not os.path.exists(out_end):
+            seek_t = max(0, dur - 0.5)
+            cmd = [
+                'ffmpeg', '-y', '-ss', str(seek_t), '-i', path,
+                '-vf', 'scale=-2:120', '-vframes', '1', '-q:v', '5', 
+                out_end
+            ]
+            self.run_ffmpeg(cmd, si)
+        self.thumbnail_generated.emit(uid, out_start, out_end)
+
+    def run_ffmpeg(self, cmd, startup_info):
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                           startupinfo=startup_info, check=True)
+        except Exception:
+            pass

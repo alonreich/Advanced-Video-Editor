@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QHBoxLayout
+﻿from PyQt5.QtWidgets import QWidget, QHBoxLayout
 from PyQt5.QtCore import pyqtSignal
 
 from timeline_view import TimelineView
@@ -14,14 +14,10 @@ class TimelineContainer(QWidget):
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
-        
         self.track_headers = TrackHeaders()
         self.timeline_view = TimelineView()
-        
         self.main_layout.addWidget(self.track_headers)
         self.main_layout.addWidget(self.timeline_view)
-        
-        # Expose signals
         self.timeline_view.time_updated.connect(self.time_updated)
         self.timeline_view.clip_selected.connect(self.clip_selected)
         self.timeline_view.file_dropped.connect(self.file_dropped)
@@ -35,8 +31,6 @@ class TimelineContainer(QWidget):
         self.timeline_view.add_track_to_scene()
 
     def __getattr__(self, name):
-        # Forward method calls to timeline_view
         if hasattr(self.timeline_view, name):
             return getattr(self.timeline_view, name)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-

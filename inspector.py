@@ -1,153 +1,156 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, QSlider, QHBoxLayout, QGridLayout
+﻿from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
+                             QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton)
 from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtGui import QIcon
 
 class InspectorWidget(QWidget):
     param_changed = pyqtSignal(str, float)
+    resolution_changed = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("background-color: #2E2E2E; color: white;")
-        layout = QVBoxLayout(self)
+        self.setStyleSheet("""
+            QWidget { background-color: #2E2E2E; color: #E0E0E0; font-family: 'Segoe UI'; }
+            QGroupBox { border: 1px solid #444; border-radius: 4px; margin-top: 20px; font-weight: bold; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; left: 10px; color: #AAA; }
+            QAbstractSpinBox { background: #1E1E1E; border: 1px solid #444; border-radius: 2px; padding: 4px; color: white; selection-background-color: #4A90E2; }
+            QAbstractSpinBox:hover { border: 1px solid #666; }
+            QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { background: #333; width: 15px; }
+            QAbstractSpinBox::up-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 6px solid #AAA; margin: 2px; }
+            QAbstractSpinBox::down-arrow { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #AAA; margin: 2px; }
+            QSlider::groove:horizontal { border: 1px solid #444; height: 6px; background: #1E1E1E; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #4A90E2; border: 1px solid #4A90E2; width: 18px; height: 18px; margin: -7px 0; border-radius: 9px; }
+            QSlider::sub-page:horizontal { background: #4A90E2; border-radius: 3px; }
+            QComboBox { background: #1E1E1E; border: 1px solid #444; padding: 4px; color: white; }
+            QToolButton { background: transparent; border: none; color: #888; }
+            QToolButton:hover { color: #FFF; }
+        """)
+        self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(15)
         self.lbl_title = QLabel("No Selection")
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        layout.addWidget(self.lbl_title)
-        
-        gb_speed = QGroupBox("Speed")
-        gb_speed.setStyleSheet("QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 3px; }")
-        sl = QVBoxLayout(gb_speed)
-        self.spin_speed = QDoubleSpinBox()
-        self.spin_speed.setAlignment(Qt.AlignCenter)
-        self.spin_speed.setStyleSheet("""
-            QDoubleSpinBox::up-button { 
-                width: 40px; height: 20px; background-color: #555; 
-                border-bottom: 1px solid #333;
-            }
-            QDoubleSpinBox::up-button:hover { background-color: #666; }
-            QDoubleSpinBox::down-button { 
-                width: 40px; height: 20px; background-color: #555; 
-            }
-            QDoubleSpinBox::down-button:hover { background-color: #666; }
-        """)
-        self.spin_speed.setRange(0.1, 5.0)
-        self.spin_speed.setValue(1.0)
-        self.spin_speed.setFixedHeight(40)
-        self.spin_speed.setToolTip("Adjust the playback speed of the clip.")
-        self.spin_speed.valueChanged.connect(lambda v: self.param_changed.emit("speed", v))
-        sl.addWidget(self.spin_speed)
-        layout.addWidget(gb_speed)
-        
-        gb_vol = QGroupBox("Volume")
-        gb_vol.setStyleSheet("QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 3px; }")
-        gb_vol.setToolTip("Adjust the volume of the clip.")
-        vl = QVBoxLayout(gb_vol)
-        
-        vol_layout = QHBoxLayout()
-        self.slider_vol = QSlider(Qt.Vertical)
-        self.slider_vol.setRange(0, 200)
-        self.slider_vol.setValue(100)
-        
-        self.spin_vol = QDoubleSpinBox()
-        self.spin_vol.setAlignment(Qt.AlignCenter)
-        self.spin_vol.setStyleSheet("""
-            QDoubleSpinBox::up-button { 
-                width: 40px; height: 20px; background-color: #555; 
-                border-bottom: 1px solid #333;
-            }
-            QDoubleSpinBox::down-button { 
-                width: 40px; height: 20px; background-color: #555; 
-            }
-            QDoubleSpinBox::down-button:hover { background-color: #666; }
-        """)
-        self.spin_vol.setRange(0, 200)
-        self.spin_vol.setValue(100)
-        
-        self.slider_vol.valueChanged.connect(lambda v: self.spin_vol.setValue(float(v)))
-        self.spin_vol.valueChanged.connect(lambda v: self.slider_vol.setValue(int(v)))
-        self.spin_vol.valueChanged.connect(lambda v: self.param_changed.emit("volume", v))
-        
-        vol_layout.addWidget(self.slider_vol)
-        vol_layout.addWidget(self.spin_vol)
-        vl.addLayout(vol_layout)
-        layout.addWidget(gb_vol)
-
+        self.lbl_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFF; margin-bottom: 10px;")
+        self.lbl_title.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(self.lbl_title)
+        self.layout.addWidget(self.create_slider_group("Speed", "speed", 0.1, 5.0, 1.0))
+        self.layout.addWidget(self.create_slider_group("Volume", "volume", 0.0, 200.0, 100.0))
+        self.create_crop_group()
         gb_info = QGroupBox("Information")
-        info_layout = QVBoxLayout(gb_info)
+        info_l = QVBoxLayout(gb_info)
         self.lbl_res = QLabel("Resolution: N/A")
         self.lbl_bitrate = QLabel("Bitrate: N/A")
-        info_layout.addWidget(self.lbl_res)
-        info_layout.addWidget(self.lbl_bitrate)
-        layout.addWidget(gb_info)
+        info_l.addWidget(self.lbl_res)
+        info_l.addWidget(self.lbl_bitrate)
+        self.layout.addWidget(gb_info)
+        self.layout.addStretch()
+        gb_proj = QGroupBox("Project Settings")
+        proj_l = QVBoxLayout(gb_proj)
+        self.combo_res = QComboBox()
+        self.combo_res.addItems([
+            "Landscape 1920x1080 (HD)", "Landscape 2560x1440 (QHD)", "Landscape 3840x2160 (4K)",
+            "Portrait 1080x1920 (Mobile HD)", "Portrait 1440x2560 (Mobile QHD)"
+        ])
+        self.combo_res.currentTextChanged.connect(self.resolution_changed.emit)
+        proj_l.addWidget(QLabel("Output Resolution:"))
+        proj_l.addWidget(self.combo_res)
+        self.layout.addWidget(gb_proj)
 
-        gb_crop = QGroupBox("Crop")
-        gb_crop.setStyleSheet("QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 3px; }")
-        crop_layout = QGridLayout(gb_crop)
-        
-        self.spin_crop_x1 = QDoubleSpinBox()
-        self.spin_crop_y1 = QDoubleSpinBox()
-        self.spin_crop_x2 = QDoubleSpinBox()
-        self.spin_crop_y2 = QDoubleSpinBox()
+    def create_slider_group(self, title, param_name, min_val, max_val, default):
+        gb = QGroupBox(title)
+        l = QHBoxLayout(gb)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(int(min_val*100), int(max_val*100))
+        if param_name == "volume":
+            slider.setRange(0, 100)
+            slider.setValue(int(default))
+            spin = QDoubleSpinBox() if isinstance(default, float) else QSpinBox()
+            spin.setRange(0, 100)
+            spin.setValue(int(default))
+            self.chk_mute = QToolButton()
+            self.chk_mute.setText("Mute")
+            self.chk_mute.setCheckable(True)
+            self.chk_mute.toggled.connect(lambda c: self.param_changed.emit("mute", 1.0 if c else 0.0))
+            l.addWidget(self.chk_mute)
+        else:
+            slider.setValue(int(default*100))
+            spin = QDoubleSpinBox()
+            spin.setRange(min_val, max_val)
+            spin.setValue(default)
+            spin.setSingleStep(0.1)
+        spin.setFixedWidth(60)
+        btn_reset = QToolButton()
+        btn_reset.setText("↺")
+        btn_reset.setToolTip(f"Reset {title}")
+        if param_name == "volume":
+            btn_reset.clicked.connect(lambda: spin.setValue(default))
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
+            spin.valueChanged.connect(lambda v: self.param_changed.emit(param_name, float(v)))
+        else:
+            btn_reset.clicked.connect(lambda: spin.setValue(default))
+            slider.valueChanged.connect(lambda v: spin.setValue(v/100))
+            spin.valueChanged.connect(lambda v: slider.setValue(int(v*100)))
+            spin.valueChanged.connect(lambda v: self.param_changed.emit(param_name, v))
+        setattr(self, f"spin_{param_name}", spin)
+        setattr(self, f"slider_{param_name}", slider)
+        l.addWidget(slider)
+        l.addWidget(spin)
+        l.addWidget(btn_reset)
+        return gb
 
-        no_buttons_style = "QDoubleSpinBox { border: 1px solid #555; } QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { border: none; background: transparent; }"
-        for s in [self.spin_crop_x1, self.spin_crop_y1, self.spin_crop_x2, self.spin_crop_y2]:
-            s.setRange(0.0, 1.0)
-            s.setSingleStep(0.01)
-            s.setStyleSheet(no_buttons_style)
-            s.setAlignment(Qt.AlignCenter)
+    def create_crop_group(self):
+        gb = QGroupBox("Crop")
+        l = QGridLayout(gb)
+        self.spin_crop_x1 = self.make_crop_spin()
+        self.spin_crop_y1 = self.make_crop_spin()
+        self.spin_crop_x2 = self.make_crop_spin()
+        self.spin_crop_y2 = self.make_crop_spin()
+        self.spin_crop_x1.valueChanged.connect(lambda v: self.param_changed.emit("crop_x1", v/100))
+        self.spin_crop_y1.valueChanged.connect(lambda v: self.param_changed.emit("crop_y1", v/100))
+        self.spin_crop_x2.valueChanged.connect(lambda v: self.param_changed.emit("crop_x2", v/100))
+        self.spin_crop_y2.valueChanged.connect(lambda v: self.param_changed.emit("crop_y2", v/100))
+        l.addWidget(QLabel("Top-Left %"), 0, 0, 1, 2)
+        l.addWidget(self.spin_crop_x1, 1, 0)
+        l.addWidget(self.spin_crop_y1, 1, 1)
+        l.addWidget(QLabel("Btm-Right %"), 2, 0, 1, 2)
+        l.addWidget(self.spin_crop_x2, 3, 0)
+        l.addWidget(self.spin_crop_y2, 3, 1)
+        btn_reset = QToolButton()
+        btn_reset.setText("Reset Crop")
+        btn_reset.clicked.connect(self.reset_crop)
+        l.addWidget(btn_reset, 4, 0, 1, 2)
+        self.layout.addWidget(gb)
 
-        self.spin_crop_x1.valueChanged.connect(lambda v: self.param_changed.emit("crop_x1", v))
-        self.spin_crop_y1.valueChanged.connect(lambda v: self.param_changed.emit("crop_y1", v))
-        self.spin_crop_x2.valueChanged.connect(lambda v: self.param_changed.emit("crop_x2", v))
-        self.spin_crop_y2.valueChanged.connect(lambda v: self.param_changed.emit("crop_y2", v))
-        
-        crop_layout.addWidget(QLabel("Top Left X,Y"), 0, 0, 1, 2)
-        crop_layout.addWidget(self.spin_crop_x1, 1, 0)
-        crop_layout.addWidget(self.spin_crop_y1, 1, 1)
-        crop_layout.addWidget(QLabel("Bottom Right X,Y"), 2, 0, 1, 2)
-        crop_layout.addWidget(self.spin_crop_x2, 3, 0)
-        crop_layout.addWidget(self.spin_crop_y2, 3, 1)
-        
-        layout.addWidget(gb_crop)
+    def make_crop_spin(self):
+        s = QDoubleSpinBox()
+        s.setRange(0, 100)
+        s.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        s.setAlignment(Qt.AlignCenter)
+        return s
 
-        layout.addStretch()
+    def reset_crop(self):
+        self.spin_crop_x1.setValue(0)
+        self.spin_crop_y1.setValue(0)
+        self.spin_crop_x2.setValue(100)
+        self.spin_crop_y2.setValue(100)
 
     def set_clip(self, clip_model):
+        self.blockSignals(True)
         if not clip_model:
             self.lbl_title.setText("No Selection")
-            self.setEnabled(False)
-            self.blockSignals(True)
-            self.spin_speed.setValue(1.0)
-            self.spin_vol.setValue(100)
-            self.slider_vol.setValue(100)
-            self.lbl_res.setText("Resolution: N/A")
-            self.lbl_bitrate.setText("Bitrate: N/A")
-            self.spin_crop_x1.setValue(0)
-            self.spin_crop_y1.setValue(0)
-            self.spin_crop_x2.setValue(1)
-            self.spin_crop_y2.setValue(1)
-            self.blockSignals(False)
-            return
-        
-        self.lbl_title.setText(f"Clip: {clip_model.name}")
-        self.setEnabled(True)
-        self.blockSignals(True)
-        self.spin_speed.setValue(getattr(clip_model, 'speed', 1.0))
-        self.spin_vol.setValue(getattr(clip_model, 'volume', 100.0))
-        self.slider_vol.setValue(int(getattr(clip_model, 'volume', 100.0)))
-        
-        self.spin_crop_x1.setValue(getattr(clip_model, 'crop_x1', 0.0))
-        self.spin_crop_y1.setValue(getattr(clip_model, 'crop_y1', 0.0))
-        self.spin_crop_x2.setValue(getattr(clip_model, 'crop_x2', 1.0))
-        self.spin_crop_y2.setValue(getattr(clip_model, 'crop_y2', 1.0))
-
-        if getattr(clip_model, 'width', 0) > 0:
-            self.lbl_res.setText(f"Resolution: {clip_model.width}x{clip_model.height}")
+            self.spin_speed.setEnabled(False)
+            self.spin_volume.setEnabled(False)
         else:
-            self.lbl_res.setText("Resolution: N/A (Audio)")
-
-        bitrate = getattr(clip_model, 'bitrate', 0)
-        if bitrate > 0:
-            self.lbl_bitrate.setText(f"Bitrate: {bitrate / 1000:.0f} kbps")
-        else:
-            self.lbl_bitrate.setText("Bitrate: N/A")
-            
+            self.lbl_title.setText(f"Clip: {clip_model.name}")
+            self.spin_speed.setEnabled(True)
+            self.spin_volume.setEnabled(True)
+            self.spin_speed.setValue(getattr(clip_model, 'speed', 1.0))
+            self.spin_volume.setValue(getattr(clip_model, 'volume', 100.0))
+            self.spin_crop_x1.setValue(getattr(clip_model, 'crop_x1', 0.0) * 100)
+            self.spin_crop_y1.setValue(getattr(clip_model, 'crop_y1', 0.0) * 100)
+            self.spin_crop_x2.setValue(getattr(clip_model, 'crop_x2', 1.0) * 100)
+            self.spin_crop_y2.setValue(getattr(clip_model, 'crop_y2', 1.0) * 100)
+            w = getattr(clip_model, 'width', 0)
+            h = getattr(clip_model, 'height', 0)
+            self.lbl_res.setText(f"Resolution: {w}x{h}" if w > 0 else "Resolution: N/A")
+            self.lbl_bitrate.setText(f"Bitrate: {getattr(clip_model, 'bitrate', 0)//1000} kbps")
         self.blockSignals(False)

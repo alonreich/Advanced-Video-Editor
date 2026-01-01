@@ -21,19 +21,23 @@ class ClipModel:
     crop_y1: float = 0.0
     crop_x2: float = 1.0
     crop_y2: float = 1.0
+    fade_in: float = 0.0
+    fade_out: float = 0.0
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_dict(self):
         return {
             'uid': self.uid, 'path': self.path, 'name': self.name,
             'track': self.track, 'start': self.start, 'dur': self.duration,
-            'source_in': self.source_in, 'speed': self.speed, 'volume': self.volume,
+            'source_in': self.source_in, 
+            'speed': self.speed, 'volume': self.volume,
             'scale_x': self.scale_x, 'scale_y': self.scale_y,
             'pos_x': self.pos_x, 'pos_y': self.pos_y,
             'width': self.width, 'height': self.height,
             'bitrate': self.bitrate,
             'crop_x1': self.crop_x1, 'crop_y1': self.crop_y1,
-            'crop_x2': self.crop_x2, 'crop_y2': self.crop_y2
+            'crop_x2': self.crop_x2, 'crop_y2': self.crop_y2,
+            'fade_in': self.fade_in, 'fade_out': self.fade_out
         }
     @staticmethod
     def from_dict(data):
@@ -59,4 +63,6 @@ class ClipModel:
         m.crop_y1 = data.get('crop_y1', 0.0)
         m.crop_x2 = data.get('crop_x2', 1.0)
         m.crop_y2 = data.get('crop_y2', 1.0)
+        m.fade_in = data.get('fade_in', 0.0)
+        m.fade_out = data.get('fade_out', 0.0)
         return m

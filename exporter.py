@@ -2,72 +2,132 @@
 import os
 import logging
 import platform
+import traceback
+from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class FFmpegBuilder:
-    def __init__(self, all_clips, output_path, resolution_mode="Landscape 1080p"):
+    def __init__(self, all_clips, output_path, resolution_mode="Landscape 1080p", start_time=0.0, duration=None):
         self.all_clips = all_clips
         self.out = output_path
         self.mode = resolution_mode
-# ... existing code ...
+        self.start_time = start_time
+        self.duration = duration
+        self.width = 1920
+        self.height = 1080
+        if "Portrait" in resolution_mode:
+            self.width, self.height = 1080, 1920
+        elif "2560" in resolution_mode:
+            self.width, self.height = 2560, 1440
+        elif "3840" in resolution_mode:
+            self.width, self.height = 3840, 2160
+
     def build_cmd(self, encoder="libx264"):
         inputs = []
         filter_complex = []
         file_map = {}
         input_args = []
-        for clip in self.all_clips:
+        render_end = self.start_time + (self.duration if self.duration else 99999)
+        active_clips = [c for c in self.all_clips if (c['start'] < render_end) and (c['start'] + c['dur'] > self.start_time)]
+        for clip in active_clips:
             if clip['path'] not in file_map:
                 file_map[clip['path']] = len(inputs)
                 inputs.append(clip['path'])
                 input_args.extend(['-i', clip['path']])
-        total_dur = max([c['start'] + c['dur'] for c in self.all_clips]) if self.all_clips else 10
-        filter_complex.append(f"color=c=black:s={self.width}x{self.height}:d={total_dur:.3f}[base]")
-        last_layer = "[base]"
-        self.all_clips.sort(key=lambda x: (x['track'], x['start']))
-        for i, clip in enumerate(self.all_clips):
+        total_dur = max([c['start'] + c['dur'] for c in active_clips], default=10)
+        filter_complex.append(f"color=c=black:s={self.width}x{self.height}:d={total_dur:.3f}[base_v]")
+        last_layer_v = "[base_v]"
+        video_clips = sorted([c for c in active_clips if c.get('width', 0) > 0], key=lambda x: (-x['track'], x['start']))
+        for i, clip in enumerate(video_clips):
             inp_idx = file_map[clip['path']]
-# ... existing code ...
+            lbl = f"v{i}"
+            pts_speed = 1.0 / clip['speed']
             f_chain = [
                 f"[{inp_idx}:v]trim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}",
                 "setpts=PTS-STARTPTS",
                 f"setpts=PTS*{pts_speed}"
             ]
-            
-            # Crop
-            crop = clip.get('crop_x2', 1.0) - clip.get('crop_x1', 0.0) < 1.0 or clip.get('crop_y2', 1.0) - clip.get('crop_y1', 0.0) < 1.0
-            if crop:
-                f_chain.append(f"crop=iw*({clip['crop_x2']}-{clip['crop_x1']}):ih*({clip['crop_y2']}-{clip['crop_y1']}):iw*{clip['crop_x1']}:ih*{clip['crop_y1']}")
-
-            # Scale
+            if clip.get('fade_in', 0) > 0:
+                f_chain.append(f"fade=t=in:st=0:d={clip['fade_in']}")
+            if clip.get('fade_out', 0) > 0:
+                out_start = (clip['dur'] - clip['fade_out'])
+                f_chain.append(f"fade=t=out:st={out_start}:d={clip['fade_out']}")
+            crop_w = clip.get('crop_x2', 1.0) - clip.get('crop_x1', 0.0)
+            crop_h = clip.get('crop_y2', 1.0) - clip.get('crop_y1', 0.0)
+            if crop_w < 1.0 or crop_h < 1.0:
+                 f_chain.append(f"crop=iw*{crop_w}:ih*{crop_h}:iw*{clip['crop_x1']}:ih*{clip['crop_y1']}")
             f_chain.append(f"scale={self.width}*{clip['scale_x']}:{self.height}*{clip['scale_y']}")
-
             f_chain.append(f"setsar=1[{lbl}_pre]")
             start_t = clip['start']
             end_t = start_t + clip['dur']
             next_layer = f"[bg{i}]"
-            
-            # Position
             x_pos = (self.width - self.width * clip['scale_x']) / 2 + self.width * clip['pos_x']
             y_pos = (self.height - self.height * clip['scale_y']) / 2 - self.height * clip['pos_y']
-
             overlay_filter = (
-                f"{last_layer}[{lbl}_pre]overlay="
+                f"{last_layer_v}[{lbl}_pre]overlay="
                 f"x={x_pos}:y={y_pos}:"
                 f"enable='between(t,{start_t},{end_t})':"
-                f"eof_action=pass[{next_layer}]"
+                f"eof_action=pass{next_layer}"
             )
             filter_complex.append(",".join(f_chain))
             filter_complex.append(overlay_filter)
-            last_layer = next_layer
+            last_layer_v = next_layer
+        audio_clips = sorted([c for c in active_clips if c.get('bitrate', 1) > 0], key=lambda x: (x['track'], x['start']))
+        audio_outputs = []
+        for i, clip in enumerate(audio_clips):
+            inp_idx = file_map[clip['path']]
+            lbl = f"a{i}"
+            pts_speed = 1.0 / clip['speed']
+            a_chain = [
+                f"[{inp_idx}:a]atrim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}",
+                "asetpts=PTS-STARTPTS",
+                f"atempo={clip['speed']}"
+            ]
+            if clip.get('fade_in', 0) > 0:
+                a_chain.append(f"afade=t=in:st=0:d={clip['fade_in']}")
+            if clip.get('fade_out', 0) > 0:
+                out_start = (clip['dur'] - clip['fade_out'])
+                a_chain.append(f"afade=t=out:st={out_start}:d={clip['fade_out']}")
+            start_t = clip['start']
+            end_t = start_t + clip['dur']
+            my_track = clip['track']
+            occlusions = []
+            for other in audio_clips:
+                if other['track'] > my_track:
+                    o_start = other['start']
+                    o_end = o_start + other['dur']
+                    if max(start_t, o_start) < min(end_t, o_end):
+                        pass
+            a_chain.append(f"adelay={int(start_t*1000)}|{int(start_t*1000)}")
+            vol_expr = "1"
+            for other in audio_clips:
+                if other['track'] < my_track:
+                    o_start = other['start']
+                    o_end = o_start + other['dur']
+                    if max(start_t, o_start) < min(end_t, o_end):
+                        vol_expr += f"*(1-between(t,{o_start},{o_end}))"
+            a_chain.append(f"volume='{vol_expr}':eval=frame[{lbl}_out]")
+            filter_complex.append(",".join(a_chain))
+            audio_outputs.append(f"[{lbl}_out]")
+        if audio_outputs:
+            filter_complex.append(f"{''.join(audio_outputs)}amix=inputs={len(audio_outputs)}:dropout_transition=0[out_a]")
         cmd = ['ffmpeg', '-y'] + input_args
         cmd.extend(['-filter_complex', ";".join(filter_complex)])
-        cmd.extend(['-map', last_layer])
-        if "nvenc" in encoder:
-            cmd.extend(['-c:v', encoder, '-preset', 'p4', '-rc', 'vbr'])
-        elif "amf" in encoder:
-             cmd.extend(['-c:v', encoder, '-usage', 'transcoding'])
+        cmd.extend(['-map', last_layer_v])
+        if audio_outputs:
+            cmd.extend(['-map', '[out_a]'])
+        if self.duration:
+            cmd.extend(['-ss', str(self.start_time), '-t', str(self.duration)])
+            cmd.extend(['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28'])
+            if audio_outputs: cmd.extend(['-c:a', 'aac', '-b:a', '128k'])
         else:
-            cmd.extend(['-c:v', 'libx264', '-preset', 'medium', '-crf', '23'])
+            if "nvenc" in encoder:
+                cmd.extend(['-c:v', encoder, '-preset', 'p4', '-rc', 'vbr'])
+            elif "amf" in encoder:
+                 cmd.extend(['-c:v', encoder, '-usage', 'transcoding'])
+            else:
+                cmd.extend(['-c:v', 'libx264', '-preset', 'medium', '-crf', '23'])
+            if audio_outputs: cmd.extend(['-c:a', 'aac', '-b:a', '192k'])
         cmd.append(self.out)
         return cmd
 
@@ -79,7 +139,7 @@ class RenderWorker(QThread):
     def __init__(self, builder, parent=None):
         super().__init__(parent)
         self.builder = builder
-        self.logger = logging.getLogger("ProEditor")
+        self.logger = logging.getLogger("Advanced_Video_Editor")
 
     def detect_hw(self):
         check = lambda enc: subprocess.call(['ffmpeg', '-v', 'quiet', '-f', 'lavfi', '-i', 'color', '-c:v', enc, '-t', '1', '-f', 'null', '-']) == 0
@@ -97,12 +157,18 @@ class RenderWorker(QThread):
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, startupinfo=si)
+            log_lines = []
             for line in proc.stdout:
+                log_lines.append(line)
                 if "time=" in line:
                     self.progress.emit(50) 
             if proc.wait() == 0:
                 self.finished.emit()
             else:
-                self.error.emit("Render exited with error code.")
+                full_log = "".join(log_lines)
+                self.logger.error(f"FFmpeg Failure Dump:\n{full_log}")
+                self.error.emit("Render exited with error code. Check logs for FFmpeg dump.")
         except Exception as e:
-            self.error.emit(str(e))
+            err_trace = traceback.format_exc()
+            self.logger.error(f"Render Error:\n{err_trace}")
+            self.error.emit(f"{str(e)}\nSee logs for details.")

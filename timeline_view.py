@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QScrollBar, QToolTip
+﻿from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QScrollBar, QToolTip
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPoint, QLineF, QTimer, QPointF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QDrag, QLinearGradient, QGradient, QPolygonF
 import os
@@ -7,11 +7,9 @@ from enum import Enum
 from clip_item import ClipItem
 from model import ClipModel
 
-
 class Mode(Enum):
     POINTER = 1
     RAZOR = 2
-
 
 class TimelineScene(QGraphicsScene):
     def __init__(self, num_tracks=3, track_height=50):
@@ -27,8 +25,9 @@ class TimelineScene(QGraphicsScene):
         left = int(rect.left())
         right = int(rect.right())
         painter.setPen(QPen(QColor(45, 45, 45), 1))
+        ruler_offset = 30
         for i in range(self.num_tracks):
-            y = i * self.track_height
+            y = i * self.track_height + ruler_offset
             if i % 2 == 0:
                 painter.fillRect(left, y, right - left, self.track_height, QColor(35, 35, 35))
             else:
@@ -46,9 +45,13 @@ class TimelineView(QGraphicsView):
     time_updated = pyqtSignal(float)
     file_dropped = pyqtSignal(str, int, float)
     clip_split_requested = pyqtSignal(object, float)
+    seek_request = pyqtSignal(float)
+    data_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        import logging
+        self.logger = logging.getLogger("Advanced_Video_Editor")
         self.mode = Mode.POINTER
         self.num_tracks = 3
         self.track_height = 40
@@ -65,6 +68,57 @@ class TimelineView(QGraphicsView):
         self.is_dragging_playhead = False
         self.snap_line = None
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Left:
+            delta = -5.0 if event.modifiers() & Qt.ShiftModifier else -0.1
+            self.seek_request.emit(delta)
+            event.accept()
+        elif event.key() == Qt.Key_Right:
+            delta = 5.0 if event.modifiers() & Qt.ShiftModifier else 0.1
+            self.seek_request.emit(delta)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        self.logger.info(f"Drop event detected. MIME types: {event.mimeData().formats()}")
+        if event.mimeData().hasUrls():
+            pt = self.mapToScene(event.pos())
+            track_idx = int(pt.y() // self.track_height)
+            if track_idx >= self.num_tracks: track_idx = self.num_tracks - 1
+            track_is_empty = True
+            for item in self.scene.items():
+                if isinstance(item, ClipItem) and item.track == track_idx:
+                    track_is_empty = False
+                    break
+            time_pos = 0.0
+            if not track_is_empty:
+                snapped_x = self.get_snapped_x(pt.x())
+                time_pos = max(0, snapped_x / self.scale_factor)
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if os.path.isfile(path):
+                    self.logger.info(f"Timeline Drop: {os.path.basename(path)} at Track {track_idx}, Time {time_pos:.2f}s")
+                    self.file_dropped.emit(path, track_idx, time_pos)
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            super().dropEvent(event)
+
     def add_track_to_scene(self):
         self.num_tracks += 1
         self.scene.num_tracks = self.num_tracks
@@ -80,48 +134,33 @@ class TimelineView(QGraphicsView):
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
-        
-        # Ruler background
         ruler_rect = QRectF(rect.left(), 0, rect.width(), self.ruler_height)
         painter.fillRect(ruler_rect, QColor(25, 25, 25))
-        
-        # Ruler line
         painter.setPen(QPen(QColor(150, 150, 150), 1))
         painter.drawLine(int(rect.left()), self.ruler_height, int(rect.right()), self.ruler_height)
-
-        # Ruler ticks and numbers
         start_x = rect.left()
         end_x = rect.right()
-        
         start_scene_x = self.mapToScene(QPoint(int(start_x), 0)).x()
         end_scene_x = self.mapToScene(QPoint(int(end_x), 0)).x()
-
         start_sec = int(start_scene_x / self.scale_factor)
         end_sec = int(end_scene_x / self.scale_factor)
-
+        painter.setPen(QPen(QColor(220, 220, 220), 1)) 
         for sec in range(start_sec, end_sec + 1):
             scene_x = sec * self.scale_factor
             vp_x = self.mapFromScene(QPointF(scene_x, 0)).x()
-            
             if vp_x < start_x or vp_x > end_x: continue
-            
             tick_h = 15 if sec % 5 == 0 else 8
             painter.drawLine(int(vp_x), self.ruler_height - tick_h, int(vp_x), self.ruler_height)
-            
             if sec % 5 == 0:
                 mins = sec // 60
                 secs = sec % 60
                 ts = f"{mins:02}:{secs:02}"
                 painter.drawText(int(vp_x) + 2, 12, ts)
-
-        # Playhead
         playhead_scene_x = self.playhead_pos * self.scale_factor
         playhead_vp_x = self.mapFromScene(QPointF(playhead_scene_x, 0)).x()
-
         if playhead_vp_x >= rect.left() and playhead_vp_x <= rect.right():
             painter.setPen(QPen(QColor(255, 0, 0), 1))
             painter.drawLine(int(playhead_vp_x), 0, int(playhead_vp_x), int(rect.height()))
-            
             painter.setBrush(QBrush(QColor(255, 0, 0)))
             poly = QPolygonF([
                 QPointF(playhead_vp_x - 7, 0),
@@ -139,12 +178,10 @@ class TimelineView(QGraphicsView):
                     split_time = pt.x() / self.scale_factor
                     self.clip_split_requested.emit(item, split_time)
             return
-
         if event.button() == Qt.LeftButton:
             px_scene = self.playhead_pos * self.scale_factor
             px_viewport = self.mapFromScene(QPointF(px_scene, 0)).x()
             handle_rect = QRectF(px_viewport - 7, 0, 14, 15)
-
             if handle_rect.contains(event.pos()):
                 self.is_dragging_playhead = True
                 pt = self.mapToScene(event.pos())
@@ -168,6 +205,8 @@ class TimelineView(QGraphicsView):
         if event.button() == Qt.LeftButton:
             self.is_dragging_playhead = False
         super().mouseReleaseEvent(event)
+        if self.scene.selectedItems():
+            self.data_changed.emit()
 
     def user_set_playhead(self, x):
         sec = max(0, x / self.scale_factor)
@@ -191,19 +230,15 @@ class TimelineView(QGraphicsView):
         if event.mimeData().hasUrls():
             pt = self.mapToScene(event.pos())
             track_idx = int(pt.y() // self.track_height)
-            
-            # Check if track is empty
             track_is_empty = True
             for item in self.scene.items():
                 if isinstance(item, ClipItem) and item.track == track_idx:
                     track_is_empty = False
                     break
-            
-            time_pos = 0.0 # Default to beginning
+            time_pos = 0.0
             if not track_is_empty:
                 snapped_x = self.get_snapped_x(pt.x())
                 time_pos = max(0, snapped_x / self.scale_factor)
-
             for url in event.mimeData().urls():
                 path = url.toLocalFile()
                 if os.path.isfile(path):
@@ -218,26 +253,33 @@ class TimelineView(QGraphicsView):
             if isinstance(item, ClipItem) and not item.isSelected():
                 snaps.append(item.x())
                 snaps.append(item.x() + item.rect().width())
-        
         closest_snap = None
         min_dist = float('inf')
-
         for s in snaps:
             dist = abs(x_pos - s)
             if dist < min_dist:
                 min_dist = dist
                 closest_snap = s
-
         if self.snap_line:
             self.scene.removeItem(self.snap_line)
             self.snap_line = None
-
         if min_dist <= threshold:
             pen = QPen(Qt.cyan, 1)
             self.snap_line = self.scene.addLine(closest_snap, 0, closest_snap, self.scene.height(), pen)
             return closest_snap
         else:
             return x_pos
+
+    def fit_to_view(self):
+        max_end = 0
+        for item in self.scene.items():
+            if isinstance(item, ClipItem):
+                end = item.start + item.duration
+                if end > max_end: max_end = end
+        if max_end > 0 and self.width() > 0:
+            new_scale = (self.width() - 50) / max_end
+            self.scale_factor = max(1, new_scale)
+            self.scene.update()
 
     def add_clip(self, clip_data):
         if isinstance(clip_data, dict):
@@ -248,6 +290,7 @@ class TimelineView(QGraphicsView):
             model = ClipModel.from_dict(clip_data)
         item = ClipItem(model, self.scale_factor)
         self.scene.addItem(item)
+        self.fit_to_view()
 
     def set_time(self, seconds):
         self.playhead_pos = seconds
@@ -271,15 +314,10 @@ class TimelineView(QGraphicsView):
         st = []
         for item in self.scene.items():
             if isinstance(item, ClipItem):
-                st.append({
-                    'uid': item.uid,
-                    'name': item.name,
-                    'path': item.name,
-                    'start': item.start,
-                    'dur': item.duration,
-                    'track': item.track,
-                    'speed': getattr(item, 'speed', 1.0)
-                })
+                item.model.start = item.start
+                item.model.duration = item.duration
+                item.model.track = item.track
+                st.append(item.model.to_dict())
         return st
 
     def load_state(self, state):
@@ -305,9 +343,7 @@ class TimelineView(QGraphicsView):
 
     def reorder_tracks(self, source_idx, target_idx):
         self.scene.blockSignals(True)
-        
         items_on_source = [item for item in self.scene.items() if isinstance(item, ClipItem) and item.track == source_idx]
-        
         if source_idx < target_idx:
             for i in range(source_idx + 1, target_idx + 1):
                 items_on_track = [item for item in self.scene.items() if isinstance(item, ClipItem) and item.track == i]
@@ -322,10 +358,8 @@ class TimelineView(QGraphicsView):
                     item.track += 1
                     item.model.track += 1
                     item.setY(item.y() + self.track_height)
-
         for item in items_on_source:
             item.track = target_idx
             item.model.track = target_idx
             item.setY(target_idx * self.track_height + 5)
-            
         self.scene.blockSignals(False)

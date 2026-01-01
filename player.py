@@ -2,21 +2,15 @@
 import sys
 import logging
 from PyQt5.QtWidgets import QFrame
-
-# Add local binaries folder to path for libmpv
 bin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'binaries')
-
-# Explicitly add the binaries path to the system's PATH
 os.environ['PATH'] = bin_path + os.pathsep + os.environ['PATH']
-
-# Also set MPV_HOME, which the python-mpv library might use
 os.environ['MPV_HOME'] = bin_path
 
 import mpv
 class MPVPlayer(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.logger = logging.getLogger("ProEditor")
+        self.logger = logging.getLogger("Advanced_Video_Editor")
         opts = {
             "input_default_bindings": True,
             "input_vo_keyboard": True,

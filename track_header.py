@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
+﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QDrag
 
@@ -8,23 +8,24 @@ class TrackHeaderWidget(QWidget):
         self.track_idx = track_idx
         self.setFixedWidth(120)
         self.setFixedHeight(40)
-        
         layout = QVBoxLayout(self)
         self.track_name_label = QLabel(track_name)
         self.track_name_label.setAlignment(Qt.AlignCenter)
-        
         self.mute_button = QPushButton("M")
         self.mute_button.setCheckable(True)
+        self.mute_button.setToolTip("Mute Track")
         self.solo_button = QPushButton("S")
         self.solo_button.setCheckable(True)
+        self.solo_button.setToolTip("Solo Track")
         self.lock_button = QPushButton("L")
         self.lock_button.setCheckable(True)
-        
+        self.lock_button.setToolTip("Lock Track")
         button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
         button_layout.addWidget(self.mute_button)
         button_layout.addWidget(self.solo_button)
         button_layout.addWidget(self.lock_button)
-
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.addWidget(self.track_name_label)
         layout.addLayout(button_layout)
         self.setLayout(layout)
@@ -44,13 +45,11 @@ class TrackHeaders(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setContentsMargins(0, 30, 0, 0)
         self.main_layout.setSpacing(0)
-
         self.headers = []
         for i in range(num_tracks):
             self.add_track_header(i)
-        
         self.main_layout.addStretch()
 
     def add_track_header(self, idx):
@@ -74,11 +73,7 @@ class TrackHeaders(QWidget):
             event.ignore()
 
     def dropEvent(self, event):
-# ... existing code ...
             self.headers.pop(source_idx)
             self.headers.insert(target_idx, source_widget)
-
-            # Update track indices
             self.update_track_indices()
-            
             self.tracks_reordered.emit(source_idx, target_idx)

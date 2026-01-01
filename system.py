@@ -19,7 +19,7 @@ def setup_system(base_dir):
     log_dir = os.path.abspath(os.path.join(base_dir, '..', 'logs'))
     os.makedirs(log_dir, exist_ok=True)
     fmt = logging.Formatter('%(asctime)s | %(name)-10s | %(levelname)-8s | %(message)s')
-    logger = logging.getLogger("AdvEditor")
+    logger = logging.getLogger("Advanced_Video_Editor")
     logger.setLevel(logging.DEBUG)
     f_path = os.path.join(log_dir, 'Advanced_Video_Editor.log')
     f_handler = RotatingFileHandler(f_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
