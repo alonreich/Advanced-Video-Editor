@@ -73,7 +73,37 @@ class TrackHeaders(QWidget):
             event.ignore()
 
     def dropEvent(self, event):
-            self.headers.pop(source_idx)
-            self.headers.insert(target_idx, source_widget)
-            self.update_track_indices()
-            self.tracks_reordered.emit(source_idx, target_idx)
+        if event.mimeData().hasText():
+            source_idx = int(event.mimeData().text())
+            
+            # Determine target index based on where we dropped
+            drop_pos = event.pos()
+            child = self.childAt(drop_pos)
+            
+            # Walk up logic to find the widget with track_idx
+            target_widget = None
+            if child:
+                # If we hit a button/label, get the parent container
+                curr = child
+                while curr:
+                    if isinstance(curr, TrackHeaderWidget):
+                        target_widget = curr
+                        break
+                    curr = curr.parent()
+            
+            # If dropped in empty space, assume end of list or ignore
+            if target_widget is None:
+                # Fallback: iterate heuristics or ignore
+                return
+
+            target_idx = target_widget.track_idx
+            
+            if source_idx != target_idx:
+                source_widget = self.headers.pop(source_idx)
+                self.headers.insert(target_idx, source_widget)
+                self.update_track_indices()
+                self.tracks_reordered.emit(source_idx, target_idx)
+            
+            event.accept()
+        else:
+            event.ignore()

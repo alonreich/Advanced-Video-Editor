@@ -7,7 +7,8 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class FFmpegBuilder:
-    def __init__(self, all_clips, output_path, resolution_mode="Landscape 1080p", start_time=0.0, duration=None):
+    def __init__(self, all_clips, output_path, resolution_mode="Landscape 1080p", 
+                 start_time=0.0, duration=None, proxy=False):
         self.all_clips = all_clips
         self.out = output_path
         self.mode = resolution_mode
@@ -21,8 +22,20 @@ class FFmpegBuilder:
             self.width, self.height = 2560, 1440
         elif "3840" in resolution_mode:
             self.width, self.height = 3840, 2160
+        
+        # Proxy Mode: Slash resolution by 50% for speed
+        if proxy:
+            self.width //= 2
+            self.height //= 2
 
     def build_cmd(self, encoder="libx264"):
+        # Helper for safe numeric extraction (Handles 'N/A' from ffprobe)
+        def get_val(c, key, default=0):
+            val = c.get(key, default)
+            if val in ['N/A', None]: return default
+            try: return int(val)
+            except: return default
+
         inputs = []
         filter_complex = []
         file_map = {}
@@ -37,7 +50,10 @@ class FFmpegBuilder:
         total_dur = max([c['start'] + c['dur'] for c in active_clips], default=10)
         filter_complex.append(f"color=c=black:s={self.width}x{self.height}:d={total_dur:.3f}[base_v]")
         last_layer_v = "[base_v]"
-        video_clips = sorted([c for c in active_clips if c.get('width', 0) > 0], key=lambda x: (-x['track'], x['start']))
+        
+        # Use safe get_val for width check
+        video_clips = sorted([c for c in active_clips if get_val(c, 'width') > 0], key=lambda x: (-x['track'], x['start']))
+        
         for i, clip in enumerate(video_clips):
             inp_idx = file_map[clip['path']]
             lbl = f"v{i}"
@@ -54,8 +70,10 @@ class FFmpegBuilder:
                 f_chain.append(f"fade=t=out:st={out_start}:d={clip['fade_out']}")
             crop_w = clip.get('crop_x2', 1.0) - clip.get('crop_x1', 0.0)
             crop_h = clip.get('crop_y2', 1.0) - clip.get('crop_y1', 0.0)
-            if crop_w < 1.0 or crop_h < 1.0:
-                 f_chain.append(f"crop=iw*{crop_w}:ih*{crop_h}:iw*{clip['crop_x1']}:ih*{clip['crop_y1']}")
+            # Check for < 0.99 to handle slight floating point inaccuracies
+            if crop_w < 0.99 or crop_h < 0.99:
+                 # Force even dimensions (divisible by 2) to prevent encoder crashes
+                 f_chain.append(f"crop='trunc(iw*{crop_w}/2)*2:trunc(ih*{crop_h}/2)*2:trunc(iw*{clip['crop_x1']}/2)*2:trunc(ih*{clip['crop_y1']}/2)*2'")
             f_chain.append(f"scale={self.width}*{clip['scale_x']}:{self.height}*{clip['scale_y']}")
             f_chain.append(f"setsar=1[{lbl}_pre]")
             start_t = clip['start']
@@ -72,7 +90,10 @@ class FFmpegBuilder:
             filter_complex.append(",".join(f_chain))
             filter_complex.append(overlay_filter)
             last_layer_v = next_layer
-        audio_clips = sorted([c for c in active_clips if c.get('bitrate', 1) > 0], key=lambda x: (x['track'], x['start']))
+        
+        # Use safe get_val for bitrate check
+        audio_clips = sorted([c for c in active_clips if get_val(c, 'bitrate') > 0], key=lambda x: (x['track'], x['start']))
+        
         audio_outputs = []
         for i, clip in enumerate(audio_clips):
             inp_idx = file_map[clip['path']]
@@ -99,14 +120,15 @@ class FFmpegBuilder:
                     if max(start_t, o_start) < min(end_t, o_end):
                         pass
             a_chain.append(f"adelay={int(start_t*1000)}|{int(start_t*1000)}")
-            vol_expr = "1"
-            for other in audio_clips:
-                if other['track'] < my_track:
-                    o_start = other['start']
-                    o_end = o_start + other['dur']
-                    if max(start_t, o_start) < min(end_t, o_end):
-                        vol_expr += f"*(1-between(t,{o_start},{o_end}))"
-            a_chain.append(f"volume='{vol_expr}':eval=frame[{lbl}_out]")
+            
+            # NO MAGIC DUCKING. Use the user's explicit volume setting.
+            # Convert 0-200 range to 0.0-2.0 multiplier
+            user_vol = clip.get('volume', 100.0) / 100.0
+            
+            # Handle Mute (if implemented later, usually volume=0)
+            if user_vol < 0.01: user_vol = 0.0
+            
+            a_chain.append(f"volume={user_vol}[{lbl}_out]")
             filter_complex.append(",".join(a_chain))
             audio_outputs.append(f"[{lbl}_out]")
         if audio_outputs:

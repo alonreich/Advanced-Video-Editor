@@ -20,49 +20,58 @@ class MPVPlayer(QFrame):
             "hwdec": "auto",
             "vd_lavc_threads": 4
         }
+        self.mpv = None
         try:
             self.mpv = mpv.MPV(wid=str(int(self.winId())), **opts)
         except Exception as e:
             self.logger.critical(f"MPV Init Failed: {e}")
-            raise
 
     def load(self, path):
+        if not self.mpv: return
         if not os.path.exists(path):
             self.logger.error(f"File not found: {path}")
             return
         self.mpv.play(path)
         self.mpv.pause = True
 
-    def play(self): self.mpv.pause = False
-    def pause(self): self.mpv.pause = True
-    def stop(self): self.mpv.stop()
+    def play(self): 
+        if self.mpv: self.mpv.pause = False
+    def pause(self): 
+        if self.mpv: self.mpv.pause = True
+    def stop(self): 
+        if self.mpv: self.mpv.stop()
     
     def seek(self, time_s):
-        self.mpv.seek(time_s, reference="absolute", precision="exact")
+        if self.mpv:
+            self.mpv.seek(time_s, reference="absolute", precision="exact")
     
     def get_time(self):
+        if not self.mpv: return 0.0
         t = self.mpv.time_pos
         return t if t is not None else 0.0
 
     def is_playing(self):
+        if not self.mpv: return False
         return not self.mpv.pause
 
     def set_speed(self, speed):
-        self.mpv.speed = float(speed)
+        if self.mpv: self.mpv.speed = float(speed)
 
     def set_volume(self, vol):
-        self.mpv.volume = int(vol)
+        if self.mpv: self.mpv.volume = int(vol)
 
     def apply_crop(self, clip_model):
+        if not self.mpv: return
         if clip_model and (clip_model.crop_x1 != 0.0 or clip_model.crop_y1 != 0.0 or clip_model.crop_x2 != 1.0 or clip_model.crop_y2 != 1.0):
-            w = clip_model.width * (clip_model.crop_x2 - clip_model.crop_x1)
-            h = clip_model.height * (clip_model.crop_y2 - clip_model.crop_y1)
-            x = clip_model.width * clip_model.crop_x1
-            y = clip_model.height * clip_model.crop_y1
+            # Enforce Integers for MPV crop command
+            w = int(clip_model.width * (clip_model.crop_x2 - clip_model.crop_x1))
+            h = int(clip_model.height * (clip_model.crop_y2 - clip_model.crop_y1))
+            x = int(clip_model.width * clip_model.crop_x1)
+            y = int(clip_model.height * clip_model.crop_y1)
             vf_str = f"crop={w}:{h}:{x}:{y}"
             self.mpv.vf = vf_str
         else:
             self.mpv.vf = ""
 
     def destroy(self):
-        self.mpv.terminate()
+        if self.mpv: self.mpv.terminate()

@@ -32,7 +32,6 @@ class ClipItem(QGraphicsRectItem):
 
     def paint(self, painter, option, widget):
         rect = self.rect()
-        painter.setClipRect(rect)
         grad = QLinearGradient(0, 0, 0, rect.height())
         if self.isSelected():
             grad.setColorAt(0, QColor(70, 130, 180))
@@ -59,8 +58,27 @@ class ClipItem(QGraphicsRectItem):
                 painter.drawPixmap(target, pm, QRectF(pm.rect()))
                 current_x += thumb_w
         if self.waveform_pixmap:
+            # Calculate the visual width of the ENTIRE source file
+            src_dur = getattr(self.model, 'source_duration', self.model.duration)
+            # Safety: source_duration cannot be less than current clip duration
+            src_dur = max(src_dur, self.model.duration)
+            
+            full_source_width = src_dur * self.scale
+            
+            # Shift left based on where we sliced the file
+            x_offset = -(self.model.source_in * self.scale)
+            
+            # Clip the drawing to the item's visible area so it doesn't spill
+            painter.save()
+            painter.setClipRect(rect)
             painter.setOpacity(0.8)
-            painter.drawPixmap(rect.toRect(), self.waveform_pixmap)
+            
+            # Draw the full waveform at the calculated offset
+            target_rect = QRectF(x_offset, 0, full_source_width, rect.height())
+            painter.drawPixmap(target_rect.toRect(), self.waveform_pixmap)
+            
+            painter.restore()
+
         fi_w = self.model.fade_in * self.scale
         if fi_w > 0:
             grad = QLinearGradient(0, 0, fi_w, 0)
@@ -74,10 +92,14 @@ class ClipItem(QGraphicsRectItem):
             grad.setColorAt(0, QColor(0, 0, 0, 0))
             grad.setColorAt(1, QColor(0, 0, 0, 200))
             painter.fillRect(QRectF(x_start, 0, fo_w, rect.height()), grad)
-        painter.setPen(QPen(Qt.white, 1))
-        painter.setBrush(Qt.white)
-        painter.drawEllipse(QPointF(fi_w, 6), 4, 4)
-        painter.drawEllipse(QPointF(rect.width() - fo_w, 6), 4, 4)
+        # Fade Handles: Red and Distinct
+        painter.setPen(QPen(Qt.black, 1))
+        painter.setBrush(QColor(255, 30, 30)) # Bright Red
+        
+        # Increased radius to 6 (12px diameter) for visibility
+        painter.drawEllipse(QPointF(fi_w, 6), 6, 6)
+        painter.drawEllipse(QPointF(rect.width() - fo_w, 6), 6, 6)
+        
         painter.setOpacity(1.0)
         painter.setPen(Qt.white)
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
@@ -97,22 +119,126 @@ class ClipItem(QGraphicsRectItem):
                         local_intersect = self.mapFromScene(intersect).boundingRect()
                         painter.drawRect(local_intersect)
 
-    def mousePressEvent(self, event):
+    def hoverMoveEvent(self, event):
+        # Edge detection for trim cursor
         pos = event.pos()
+        rect = self.rect()
+        margin = 10  # 10px interaction zone
+        
+        # Check Fade Handles first (priority)
         fi_x = self.model.fade_in * self.scale
-        fo_x = self.rect().width() - (self.model.fade_out * self.scale)
-        if abs(pos.x() - fi_x) < 10 and abs(pos.y() - 6) < 10:
+        fo_x = rect.width() - (self.model.fade_out * self.scale)
+        
+        if (abs(pos.x() - fi_x) < 15 and abs(pos.y() - 6) < 15) or \
+           (abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15):
+            self.setCursor(Qt.PointingHandCursor)
+        elif pos.x() < margin:
+            self.setCursor(Qt.SizeHorCursor)  # Trim Start
+        elif pos.x() > rect.width() - margin:
+            self.setCursor(Qt.SizeHorCursor)  # Trim End
+        else:
+            self.setCursor(Qt.ArrowCursor)    # Move
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        # Z-Index: Bring to front when clicked
+        for item in self.scene().items():
+            item.setZValue(0)
+        self.setZValue(10)
+        
+        pos = event.pos()
+        rect = self.rect()
+        margin = 10
+        
+        # 0. Check Slip Tool (Alt + Drag on body)
+        if event.modifiers() & Qt.AltModifier:
+            self.drag_mode = 'slip'
+            self.initial_x = event.scenePos().x()
+            self.initial_source_in = self.model.source_in
+            self.setCursor(Qt.OpenHandCursor)
+            event.accept()
+            return
+
+        # 1. Check Fade Handles
+        fi_x = self.model.fade_in * self.scale
+        fo_x = rect.width() - (self.model.fade_out * self.scale)
+        
+        if abs(pos.x() - fi_x) < 15 and abs(pos.y() - 6) < 15:
             self.drag_mode = 'fade_in'
             event.accept()
-        elif abs(pos.x() - fo_x) < 10 and abs(pos.y() - 6) < 10:
+            return
+        elif abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15:
             self.drag_mode = 'fade_out'
+            event.accept()
+            return
+
+        # 2. Check Trimming Edges
+        if pos.x() < margin:
+            self.drag_mode = 'trim_start'
+            self.initial_x = self.pos().x()
+            self.initial_width = rect.width()
+            self.initial_start = self.model.start
+            self.initial_dur = self.model.duration
+            self.initial_source_in = self.model.source_in
+            event.accept()
+        elif pos.x() > rect.width() - margin:
+            self.drag_mode = 'trim_end'
+            self.initial_width = rect.width()
             event.accept()
         else:
             self.drag_mode = 'move'
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.drag_mode == 'fade_in':
+        if self.drag_mode == 'slip':
+            # Slip Edit: Keep clip in place, scroll the content
+            diff = event.scenePos().x() - self.initial_x
+            diff_sec = diff / self.scale
+            
+            # Inverse: dragging right moves content left (earlier time)
+            new_source_in = self.initial_source_in - diff_sec
+            
+            # Boundary checks
+            src_dur = getattr(self.model, 'source_duration', self.model.duration + 100)
+            if new_source_in < 0: new_source_in = 0
+            if new_source_in + self.model.duration > src_dur:
+                new_source_in = src_dur - self.model.duration
+            
+            self.model.source_in = new_source_in
+            self.update() # Redraw waveform
+            return
+
+        elif self.drag_mode == 'trim_start':
+            delta = event.pos().x()
+            max_delta = (self.model.duration - 0.1) * self.scale
+            delta = min(delta, max_delta)
+            
+            new_dur = self.model.duration - (delta / self.scale)
+            new_start = self.model.start + (delta / self.scale)
+            new_source_in = self.model.source_in + (delta / self.scale)
+            
+            if new_source_in < 0: return 
+
+            self.setPos(new_start * self.scale, self.y())
+            self.setRect(0, 0, new_dur * self.scale, 30)
+            self.model.start = new_start
+            self.model.duration = new_dur
+            self.model.source_in = new_source_in
+            self.update()
+            
+        elif self.drag_mode == 'trim_end':
+            new_width = max(5, event.pos().x())
+            new_dur = new_width / self.scale
+            src_dur = getattr(self.model, 'source_duration', 99999)
+            if self.model.source_in + new_dur > src_dur:
+                new_dur = src_dur - self.model.source_in
+                new_width = new_dur * self.scale
+            
+            self.setRect(0, 0, new_width, 30)
+            self.model.duration = new_dur
+            self.update()
+
+        elif self.drag_mode == 'fade_in':
             x = max(0, event.pos().x())
             val = x / self.scale
             self.model.fade_in = min(val, self.model.duration / 2)
@@ -126,52 +252,55 @@ class ClipItem(QGraphicsRectItem):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.drag_mode in ['fade_in', 'fade_out']:
-            self.drag_mode = None
-        else:
-            super().mouseReleaseEvent(event)
-            
-    def itemChange(self, change, value):
-        if change == QGraphicsItem.ItemPositionChange and self.scene():
-            new_pos = value
-            track_h = 40
-            t_idx = round((new_pos.y() - 35) / track_h)
-            t_idx = max(0, t_idx)
-            tentative_y = t_idx * track_h + 35
-            future_rect = QRectF(new_pos.x(), tentative_y, self.rect().width(), self.rect().height())
-            new_pos.setY(tentative_y)
-            self.track = t_idx
-            view = self.scene().views()[0]
-            snapped_x = view.get_snapped_x(new_pos.x())
-            new_pos.setX(max(0, snapped_x))
-            return new_pos
-        return super().itemChange(change, value)
-
-    def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
+        
+        # 1. Resolve Overlaps (Strict Anti-Collision)
+        if self.scene():
+            safe = False
+            iterations = 0
+            while not safe and iterations < 5:
+                # Find anyone I am currently overlapping on the same track
+                collisions = [i for i in self.scene().items() 
+                              if isinstance(i, ClipItem) and i != self 
+                              and i.track == self.track and i.collidesWithItem(self)]
+                
+                if not collisions:
+                    safe = True
+                else:
+                    # I hit someone. Jump to their closest edge (Start or End).
+                    obstacle = collisions[0]
+                    obs_start = obstacle.x()
+                    obs_end = obstacle.x() + obstacle.rect().width()
+                    my_center = self.x() + (self.rect().width() / 2)
+                    obs_center = obs_start + (obstacle.rect().width() / 2)
+                    
+                    if my_center > obs_center:
+                        # Closer to the right -> Snap to End (Append)
+                        self.setX(obs_end)
+                    else:
+                        # Closer to the left -> Snap to Start (Prepend)
+                        # Ensure we don't go below 0
+                        new_x = max(0, obs_start - self.rect().width())
+                        self.setX(new_x)
+                    iterations += 1
+
+        # 2. Finalize Data
         self.start = self.x() / self.scale
         self.model.start = self.start
         self.model.track = self.track
-        if self.scene():
-            collisions = [i for i in self.scene().items() 
-                          if isinstance(i, ClipItem) and i != self and i.track == self.track and i.collidesWithItem(self)]
-            if collisions:
-                victim = min(collisions, key=lambda x: x.start)
-                required_clearance = self.start + self.duration
-                offset = required_clearance - victim.start
-                if offset > 0:
-                    items_to_shift = [i for i in self.scene().items() 
-                                      if isinstance(i, ClipItem) and i != self and i.track == self.track and i.start >= victim.start]
-                    for item in items_to_shift:
-                        item.start += offset
-                        item.model.start = item.start
-                        item.setX(item.start * item.scale)
+        
         if self.scene() and self.scene().views():
             view = self.scene().views()[0]
             if view.snap_line:
                 view.scene.removeItem(view.snap_line)
                 view.snap_line = None
             view.fit_to_view()
+
+    def cleanup(self):
+        # Memory Leak Fix
+        self.waveform_pixmap = None
+        self.thumbnail_start = None
+        self.thumbnail_end = None
 
     def set_speed(self, value):
         self.model.speed = value

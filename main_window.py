@@ -1,4 +1,5 @@
-﻿import os
+﻿from PyQt5.QtWidgets import QProgressDialog
+import os
 from exporter import FFmpegBuilder, RenderWorker
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QFileDialog, QDockWidget, QAction, QMessageBox, QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QListView, QActionGroup, QMenu, QToolButton, QInputDialog
 from PyQt5.QtWidgets import QSizePolicy, QPushButton
@@ -120,6 +121,13 @@ class MainWindow(QMainWindow):
         ag.addAction(act_raz)
         act_crop = tb.addAction("Crop Tool")
         act_crop.triggered.connect(lambda: self.preview.overlay.toggle_crop_mode())
+        
+        tb.addSeparator()
+        self.act_proxy = tb.addAction("🚀 Proxy")
+        self.act_proxy.setCheckable(True)
+        self.act_proxy.setToolTip("Enable Fast Preview (Half Resolution)")
+        self.act_proxy.setChecked(False)  # Off by default
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
@@ -226,6 +234,8 @@ class MainWindow(QMainWindow):
             'path': item.model.path,
             'start': right_start,
             'dur': right_dur,
+            'source_in': item.model.source_in + split_point_relative,
+            'source_duration': item.model.source_duration,  # Preserve total length
             'track': item.track,
             'width': item.model.width,
             'height': item.model.height,
@@ -266,6 +276,13 @@ class MainWindow(QMainWindow):
     def on_param_changed(self, param, value):
         item = self.timeline.get_selected_item()
         if not item: return
+
+        # SAVE STATE before modifying!
+        # Check if the value actually changed to avoid spamming undo stack
+        current_val = getattr(item.model, param, None)
+        if current_val != value:
+            self.save_state_for_undo()
+
         if param == "speed":
             item.set_speed(value)
             if self.player_node.is_playing():
@@ -314,6 +331,8 @@ class MainWindow(QMainWindow):
             'path': info['path'],
             'start': target['time'],
             'dur': info['duration'],
+            'source_in': 0.0,
+            'source_duration': info['duration'],
             'track': target['track'],
             'width': info.get('width', 1920),
             'height': info.get('height', 1080),
@@ -419,7 +438,12 @@ class MainWindow(QMainWindow):
         os.makedirs(cache_dir, exist_ok=True)
         preview_path = os.path.join(cache_dir, "preview.mp4")
         res_mode = self.inspector.combo_res.currentText()
-        builder = FFmpegBuilder(state, preview_path, res_mode, start_time=start_time, duration=duration)
+        
+        # Pass proxy state to builder
+        use_proxy = self.act_proxy.isChecked()
+        if use_proxy: self.logger.info("Building Preview in PROXY mode (Half-Res)")
+            
+        builder = FFmpegBuilder(state, preview_path, res_mode, start_time=start_time, duration=duration, proxy=use_proxy)
         self._pending_cache_start = start_time
         self._pending_cache_end = start_time + duration
         self.preview_worker = RenderWorker(builder)
@@ -447,18 +471,50 @@ class MainWindow(QMainWindow):
         if "1080x1920" in text: w, h = 1080, 1920
         self.preview.set_mode(w, h, text)
 
+    # C:\Fortnite_Video_Software\advanced\main_window.py
+
+# Add this import at the top
+from PyQt5.QtWidgets import QProgressDialog
+
+# Replace the start_export method (Source 170)
     def start_export(self):
         state = self.timeline.get_state()
         if not state: return
+        
         last_dir = self.config.get("last_export_dir", self.base_dir)
         out, _ = QFileDialog.getSaveFileName(self, "Export", last_dir, filter="MP4 (*.mp4)")
         if not out: return
+        
         self.config.set("last_export_dir", os.path.dirname(out))
         res_mode = self.inspector.combo_res.currentText()
+        
+        # Disable Player
+        self.player_node.pause()
+        
+        # Create Builder
         builder = FFmpegBuilder(state, out, res_mode)
+        
+        # Setup Modal Progress Dialog
+        self.progress_dlg = QProgressDialog("Exporting Video...", "Cancel", 0, 100, self)
+        self.progress_dlg.setWindowModality(Qt.WindowModal)
+        self.progress_dlg.setAutoClose(True)
+        self.progress_dlg.setAutoReset(True)
+        self.progress_dlg.show()
+        
         self.render_worker = RenderWorker(builder)
+        self.render_worker.progress.connect(self.progress_dlg.setValue)
+        
+        # Handle Finish
         self.render_worker.finished.connect(lambda: QMessageBox.information(self, "Done", "Export Successful"))
+        self.render_worker.finished.connect(self.progress_dlg.close)
+        
+        # Handle Error
         self.render_worker.error.connect(lambda e: QMessageBox.critical(self, "Error", e))
+        self.render_worker.error.connect(self.progress_dlg.close)
+        
+        # Handle Cancel (Kill FFmpeg)
+        self.progress_dlg.canceled.connect(self.render_worker.terminate)
+        
         self.render_worker.start()
 
     def delete_all_projects_confirm(self):

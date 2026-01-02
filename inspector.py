@@ -1,5 +1,5 @@
 ﻿from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
-                             QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton)
+                             QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox)
 from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QIcon
 
@@ -54,44 +54,66 @@ class InspectorWidget(QWidget):
         proj_l.addWidget(self.combo_res)
         self.layout.addWidget(gb_proj)
 
+    # C:\Fortnite_Video_Software\advanced\inspector.py
+
+# Replace create_slider_group method (Source 97-103)
     def create_slider_group(self, title, param_name, min_val, max_val, default):
         gb = QGroupBox(title)
         l = QHBoxLayout(gb)
+        
         slider = QSlider(Qt.Horizontal)
-        slider.setRange(int(min_val*100), int(max_val*100))
+        
         if param_name == "volume":
-            slider.setRange(0, 100)
+            slider.setRange(0, 200)
             slider.setValue(int(default))
-            spin = QDoubleSpinBox() if isinstance(default, float) else QSpinBox()
-            spin.setRange(0, 100)
+            spin = QSpinBox()
+            spin.setRange(0, 200)
             spin.setValue(int(default))
+            
             self.chk_mute = QToolButton()
             self.chk_mute.setText("Mute")
             self.chk_mute.setCheckable(True)
             self.chk_mute.toggled.connect(lambda c: self.param_changed.emit("mute", 1.0 if c else 0.0))
             l.addWidget(self.chk_mute)
+
         else:
+            slider.setRange(int(min_val*100), int(max_val*100))
             slider.setValue(int(default*100))
             spin = QDoubleSpinBox()
             spin.setRange(min_val, max_val)
             spin.setValue(default)
             spin.setSingleStep(0.1)
-        spin.setFixedWidth(60)
+
+        # LINKING
+        # 1. Spin -> Slider (Update UI only)
+        if param_name == "volume":
+            spin.valueChanged.connect(lambda v: slider.setValue(int(v)))
+            # SpinBox editingFinished -> Undoable Action
+            spin.editingFinished.connect(lambda: self.param_changed.emit(param_name, float(spin.value())))
+        else:
+            spin.valueChanged.connect(lambda v: slider.setValue(int(v*100)))
+            spin.editingFinished.connect(lambda: self.param_changed.emit(param_name, spin.value()))
+
+        # 2. Slider -> Spin (Update UI only while dragging)
+        if param_name == "volume":
+            slider.valueChanged.connect(spin.setValue)
+        else:
+            slider.valueChanged.connect(lambda v: spin.setValue(v/100))
+
+        # 3. Slider RELEASE -> Undoable Action (The Fix)
+        if param_name == "volume":
+            slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, float(slider.value())))
+        else:
+            slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, slider.value()/100))
+
         btn_reset = QToolButton()
         btn_reset.setText("↺")
-        btn_reset.setToolTip(f"Reset {title}")
-        if param_name == "volume":
-            btn_reset.clicked.connect(lambda: spin.setValue(default))
-            slider.valueChanged.connect(spin.setValue)
-            spin.valueChanged.connect(slider.setValue)
-            spin.valueChanged.connect(lambda v: self.param_changed.emit(param_name, float(v)))
-        else:
-            btn_reset.clicked.connect(lambda: spin.setValue(default))
-            slider.valueChanged.connect(lambda v: spin.setValue(v/100))
-            spin.valueChanged.connect(lambda v: slider.setValue(int(v*100)))
-            spin.valueChanged.connect(lambda v: self.param_changed.emit(param_name, v))
+        btn_reset.clicked.connect(lambda: spin.setValue(default))
+        btn_reset.clicked.connect(lambda: self.param_changed.emit(param_name, float(default))) # Ensure reset commits
+        
         setattr(self, f"spin_{param_name}", spin)
         setattr(self, f"slider_{param_name}", slider)
+        
         l.addWidget(slider)
         l.addWidget(spin)
         l.addWidget(btn_reset)

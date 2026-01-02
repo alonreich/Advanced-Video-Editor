@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QScrollBar, QToolTip
+﻿from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QWidget, QScrollBar, QToolTip, QMenu
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPoint, QLineF, QTimer, QPointF
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont, QDrag, QLinearGradient, QGradient, QPolygonF
 import os
@@ -24,15 +24,17 @@ class TimelineScene(QGraphicsScene):
         r = self.sceneRect()
         left = int(rect.left())
         right = int(rect.right())
+        
+        # Draw Tracks
         painter.setPen(QPen(QColor(45, 45, 45), 1))
         ruler_offset = 30
         for i in range(self.num_tracks):
             y = i * self.track_height + ruler_offset
-            if i % 2 == 0:
-                painter.fillRect(left, y, right - left, self.track_height, QColor(35, 35, 35))
-            else:
-                painter.fillRect(left, y, right - left, self.track_height, QColor(40, 40, 40))
+            color = QColor(35, 35, 35) if i % 2 == 0 else QColor(40, 40, 40)
+            painter.fillRect(left, y, right - left, self.track_height, color)
             painter.drawLine(left, y, right, y)
+        
+        # Draw Vertical Second Lines
         painter.setPen(QPen(QColor(60, 60, 60), 1))
         start_sec = int(left / 50)
         end_sec = int(right / 50)
@@ -67,6 +69,9 @@ class TimelineView(QGraphicsView):
         self.ruler_height = 30
         self.is_dragging_playhead = False
         self.snap_line = None
+        self.snapping_enabled = True
+
+    # --- INPUT EVENTS ---
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Left:
@@ -80,108 +85,57 @@ class TimelineView(QGraphicsView):
         else:
             super().keyPressEvent(event)
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.setDropAction(Qt.CopyAction)
-            event.accept()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.setDropAction(Qt.CopyAction)
-            event.accept()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        self.logger.info(f"Drop event detected. MIME types: {event.mimeData().formats()}")
-        if event.mimeData().hasUrls():
-            pt = self.mapToScene(event.pos())
-            track_idx = int(pt.y() // self.track_height)
-            if track_idx >= self.num_tracks: track_idx = self.num_tracks - 1
-            track_is_empty = True
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            # Zoom In/Out
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.scale_factor *= 1.1
+            else:
+                self.scale_factor *= 0.9
+            
+            self.scale_factor = max(1, min(self.scale_factor, 500)) # Limits
+            
+            # Re-draw all items with new scale
             for item in self.scene.items():
-                if isinstance(item, ClipItem) and item.track == track_idx:
-                    track_is_empty = False
-                    break
-            time_pos = 0.0
-            if not track_is_empty:
-                snapped_x = self.get_snapped_x(pt.x())
-                time_pos = max(0, snapped_x / self.scale_factor)
-            for url in event.mimeData().urls():
-                path = url.toLocalFile()
-                if os.path.isfile(path):
-                    self.logger.info(f"Timeline Drop: {os.path.basename(path)} at Track {track_idx}, Time {time_pos:.2f}s")
-                    self.file_dropped.emit(path, track_idx, time_pos)
-            event.setDropAction(Qt.CopyAction)
+                if isinstance(item, ClipItem):
+                    item.scale = self.scale_factor
+                    item.setPos(item.model.start * self.scale_factor, item.y())
+                    item.setRect(0, 0, item.model.duration * self.scale_factor, 30)
+            
+            self.scene.update()
             event.accept()
         else:
-            super().dropEvent(event)
+            # Scroll Horizontal
+            super().wheelEvent(event)
 
-    def add_track_to_scene(self):
-        self.num_tracks += 1
-        self.scene.num_tracks = self.num_tracks
-        self.scene.setSceneRect(0, 0, self.scene.sceneRect().width(), self.num_tracks * self.track_height)
-        self.scene.update()
-
-    def set_mode(self, mode):
-        self.mode = mode
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.scene.setSceneRect(0, 0, max(3600*50, self.width()), self.num_tracks * self.track_height)
-
-    def drawForeground(self, painter, rect):
-        super().drawForeground(painter, rect)
-        ruler_rect = QRectF(rect.left(), 0, rect.width(), self.ruler_height)
-        painter.fillRect(ruler_rect, QColor(25, 25, 25))
-        painter.setPen(QPen(QColor(150, 150, 150), 1))
-        painter.drawLine(int(rect.left()), self.ruler_height, int(rect.right()), self.ruler_height)
-        start_x = rect.left()
-        end_x = rect.right()
-        start_scene_x = self.mapToScene(QPoint(int(start_x), 0)).x()
-        end_scene_x = self.mapToScene(QPoint(int(end_x), 0)).x()
-        start_sec = int(start_scene_x / self.scale_factor)
-        end_sec = int(end_scene_x / self.scale_factor)
-        painter.setPen(QPen(QColor(220, 220, 220), 1)) 
-        for sec in range(start_sec, end_sec + 1):
-            scene_x = sec * self.scale_factor
-            vp_x = self.mapFromScene(QPointF(scene_x, 0)).x()
-            if vp_x < start_x or vp_x > end_x: continue
-            tick_h = 15 if sec % 5 == 0 else 8
-            painter.drawLine(int(vp_x), self.ruler_height - tick_h, int(vp_x), self.ruler_height)
-            if sec % 5 == 0:
-                mins = sec // 60
-                secs = sec % 60
-                ts = f"{mins:02}:{secs:02}"
-                painter.drawText(int(vp_x) + 2, 12, ts)
-        playhead_scene_x = self.playhead_pos * self.scale_factor
-        playhead_vp_x = self.mapFromScene(QPointF(playhead_scene_x, 0)).x()
-        if playhead_vp_x >= rect.left() and playhead_vp_x <= rect.right():
-            painter.setPen(QPen(QColor(255, 0, 0), 1))
-            painter.drawLine(int(playhead_vp_x), 0, int(playhead_vp_x), int(rect.height()))
-            painter.setBrush(QBrush(QColor(255, 0, 0)))
-            poly = QPolygonF([
-                QPointF(playhead_vp_x - 7, 0),
-                QPointF(playhead_vp_x + 7, 0),
-                QPointF(playhead_vp_x, 15)
-            ])
-            painter.drawPolygon(poly)
+    def contextMenuEvent(self, event):
+        item = self.itemAt(event.pos())
+        if isinstance(item, ClipItem):
+            menu = QMenu(self)
+            act_del = menu.addAction("Delete")
+            act_del.triggered.connect(lambda: self.remove_selected_clips())
+            menu.exec_(event.globalPos())
 
     def mousePressEvent(self, event):
+        # 1. Handle Razor Mode (Priority)
         if self.mode == Mode.RAZOR:
             if event.button() == Qt.LeftButton:
                 item = self.itemAt(event.pos())
                 if isinstance(item, ClipItem):
                     pt = self.mapToScene(event.pos())
-                    split_time = pt.x() / self.scale_factor
+                    # SNAP the click pos first
+                    snapped_x = self.get_snapped_x(pt.x(), track_idx=item.track)
+                    split_time = snapped_x / self.scale_factor
                     self.clip_split_requested.emit(item, split_time)
             return
+
+        # 2. Handle Playhead Dragging
         if event.button() == Qt.LeftButton:
             px_scene = self.playhead_pos * self.scale_factor
             px_viewport = self.mapFromScene(QPointF(px_scene, 0)).x()
             handle_rect = QRectF(px_viewport - 7, 0, 14, 15)
+            
             if handle_rect.contains(event.pos()):
                 self.is_dragging_playhead = True
                 pt = self.mapToScene(event.pos())
@@ -208,51 +162,71 @@ class TimelineView(QGraphicsView):
         if self.scene.selectedItems():
             self.data_changed.emit()
 
-    def user_set_playhead(self, x):
-        sec = max(0, x / self.scale_factor)
-        self.playhead_pos = sec
-        self.scene.update()
-        self.time_updated.emit(sec)
-        
+    # --- DRAG AND DROP ---
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
+            event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             super().dragMoveEvent(event)
 
     def dropEvent(self, event):
+        self.logger.info(f"Drop event detected. MIME types: {event.mimeData().formats()}")
         if event.mimeData().hasUrls():
             pt = self.mapToScene(event.pos())
             track_idx = int(pt.y() // self.track_height)
+            if track_idx >= self.num_tracks: track_idx = self.num_tracks - 1
+            
+            # Check if dropping on top of existing clips
             track_is_empty = True
             for item in self.scene.items():
                 if isinstance(item, ClipItem) and item.track == track_idx:
                     track_is_empty = False
                     break
+            
             time_pos = 0.0
             if not track_is_empty:
                 snapped_x = self.get_snapped_x(pt.x())
                 time_pos = max(0, snapped_x / self.scale_factor)
+            
             for url in event.mimeData().urls():
                 path = url.toLocalFile()
                 if os.path.isfile(path):
+                    self.logger.info(f"Timeline Drop: {os.path.basename(path)} at Track {track_idx}, Time {time_pos:.2f}s")
                     self.file_dropped.emit(path, track_idx, time_pos)
+            
+            event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             super().dropEvent(event)
 
-    def get_snapped_x(self, x_pos, threshold=15):
+    # --- SNAPPING & VIEW ---
+
+    def get_snapped_x(self, x_pos, track_idx=None, ignore_item=None, threshold=20):
+        if not self.snapping_enabled:
+            if self.snap_line:
+                self.scene.removeItem(self.snap_line)
+                self.snap_line = None
+            return x_pos
+
         snaps = [0, self.playhead_pos * self.scale_factor]
         for item in self.scene.items():
-            if isinstance(item, ClipItem) and not item.isSelected():
-                snaps.append(item.x())
-                snaps.append(item.x() + item.rect().width())
+            if isinstance(item, ClipItem) and item != ignore_item:
+                is_same_track = (track_idx is not None and item.track == track_idx)
+                eff_threshold = threshold * 1.5 if is_same_track else threshold
+                sx = item.x()
+                ex = item.x() + item.rect().width()
+                if abs(x_pos - sx) < eff_threshold: snaps.append(sx)
+                if abs(x_pos - ex) < eff_threshold: snaps.append(ex)
+
         closest_snap = None
         min_dist = float('inf')
         for s in snaps:
@@ -260,37 +234,116 @@ class TimelineView(QGraphicsView):
             if dist < min_dist:
                 min_dist = dist
                 closest_snap = s
+        
+        if min_dist > threshold:
+            closest_snap = None
+
         if self.snap_line:
             self.scene.removeItem(self.snap_line)
             self.snap_line = None
-        if min_dist <= threshold:
+
+        if closest_snap is not None:
             pen = QPen(Qt.cyan, 1)
             self.snap_line = self.scene.addLine(closest_snap, 0, closest_snap, self.scene.height(), pen)
+            self.snap_line.setZValue(100) # FIX: Snap line always on top
             return closest_snap
         else:
             return x_pos
 
     def fit_to_view(self):
-        max_end = 0
+        min_start = float('inf')
+        max_end = float('-inf')
+        found = False
+        
         for item in self.scene.items():
             if isinstance(item, ClipItem):
-                end = item.start + item.duration
-                if end > max_end: max_end = end
-        if max_end > 0 and self.width() > 0:
-            new_scale = (self.width() - 50) / max_end
-            self.scale_factor = max(1, new_scale)
-            self.scene.update()
+                found = True
+                min_start = min(min_start, item.start)
+                max_end = max(max_end, item.start + item.duration)
+        
+        if not found: return
 
-    def add_clip(self, clip_data):
-        if isinstance(clip_data, dict):
-            model = ClipModel.from_dict(clip_data)
-        elif isinstance(clip_data, ClipModel):
-            model = clip_data
-        else:
-            model = ClipModel.from_dict(clip_data)
-        item = ClipItem(model, self.scale_factor)
-        self.scene.addItem(item)
-        self.fit_to_view()
+        total_dur = max_end - min_start
+        if total_dur <= 0: return
+
+        vp_w = self.viewport().width() - 100
+        if vp_w <= 0: return
+
+        new_scale = vp_w / total_dur
+        self.scale_factor = new_scale
+
+        for item in self.scene.items():
+            if isinstance(item, ClipItem):
+                item.scale = self.scale_factor
+                item.setPos(item.model.start * self.scale_factor, item.y())
+                item.setRect(0, 0, item.model.duration * self.scale_factor, 30)
+        
+        self.horizontalScrollBar().setValue(int(min_start * self.scale_factor))
+        self.scene.update()
+
+    # --- DRAWING ---
+
+    def drawForeground(self, painter, rect):
+        super().drawForeground(painter, rect)
+        ruler_rect = QRectF(rect.left(), 0, rect.width(), self.ruler_height)
+        painter.fillRect(ruler_rect, QColor(25, 25, 25))
+        painter.setPen(QPen(QColor(150, 150, 150), 1))
+        painter.drawLine(int(rect.left()), self.ruler_height, int(rect.right()), self.ruler_height)
+        
+        start_x = rect.left()
+        end_x = rect.right()
+        start_scene_x = self.mapToScene(QPoint(int(start_x), 0)).x()
+        end_scene_x = self.mapToScene(QPoint(int(end_x), 0)).x()
+        start_sec = int(start_scene_x / self.scale_factor)
+        end_sec = int(end_scene_x / self.scale_factor)
+        
+        painter.setPen(QPen(QColor(220, 220, 220), 1)) 
+        for sec in range(start_sec, end_sec + 1):
+            scene_x = sec * self.scale_factor
+            vp_x = self.mapFromScene(QPointF(scene_x, 0)).x()
+            if vp_x < start_x or vp_x > end_x: continue
+            tick_h = 15 if sec % 5 == 0 else 8
+            painter.drawLine(int(vp_x), self.ruler_height - tick_h, int(vp_x), self.ruler_height)
+            if sec % 5 == 0:
+                mins = sec // 60
+                secs = sec % 60
+                ts = f"{mins:02}:{secs:02}"
+                painter.drawText(int(vp_x) + 2, 12, ts)
+        
+        playhead_scene_x = self.playhead_pos * self.scale_factor
+        playhead_vp_x = self.mapFromScene(QPointF(playhead_scene_x, 0)).x()
+        
+        if playhead_vp_x >= rect.left() and playhead_vp_x <= rect.right():
+            painter.setPen(QPen(QColor(255, 0, 0), 1))
+            painter.drawLine(int(playhead_vp_x), 0, int(playhead_vp_x), int(rect.height()))
+            painter.setBrush(QBrush(QColor(255, 0, 0)))
+            poly = QPolygonF([
+                QPointF(playhead_vp_x - 7, 0),
+                QPointF(playhead_vp_x + 7, 0),
+                QPointF(playhead_vp_x, 15)
+            ])
+            painter.drawPolygon(poly)
+
+    # --- HELPERS ---
+
+    def add_track_to_scene(self):
+        self.num_tracks += 1
+        self.scene.num_tracks = self.num_tracks
+        self.scene.setSceneRect(0, 0, self.scene.sceneRect().width(), self.num_tracks * self.track_height)
+        self.scene.update()
+
+    def set_mode(self, mode):
+        self.mode = mode
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.scene.setSceneRect(0, 0, max(3600*50, self.width()), self.num_tracks * self.track_height)
+
+    def user_set_playhead(self, x):
+        sec = max(0, x / self.scale_factor)
+        self.playhead_pos = sec
+        self.scene.update()
+        self.time_updated.emit(sec)
 
     def set_time(self, seconds):
         self.playhead_pos = seconds
@@ -332,6 +385,17 @@ class TimelineView(QGraphicsView):
             c.setdefault('dur', 5.0)
             c.setdefault('track', 0)
             self.add_clip(c)
+
+    def add_clip(self, clip_data):
+        if isinstance(clip_data, dict):
+            model = ClipModel.from_dict(clip_data)
+        elif isinstance(clip_data, ClipModel):
+            model = clip_data
+        else:
+            model = ClipModel.from_dict(clip_data)
+        item = ClipItem(model, self.scale_factor)
+        self.scene.addItem(item)
+        self.fit_to_view()
 
     def get_selected_item(self):
         sel = self.scene.selectedItems()
