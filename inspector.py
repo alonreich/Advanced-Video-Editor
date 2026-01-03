@@ -1,5 +1,5 @@
 ﻿from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
-          QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox, QCheckBox)
+    QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox, QCheckBox)
 from PyQt5.QtCore import pyqtSignal, Qt
 
 class InspectorWidget(QWidget):
@@ -9,6 +9,7 @@ class InspectorWidget(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.setFixedWidth(250)
         self.setStyleSheet("""
             QWidget { background-color: #2E2E2E; color: #E0E0E0; font-family: 'Segoe UI'; }
             QGroupBox { border: 1px solid #444; border-radius: 4px; margin-top: 20px; font-weight: bold; }
@@ -35,11 +36,8 @@ class InspectorWidget(QWidget):
         self.chk_lock_pos.toggled.connect(lambda c: self.param_changed.emit("locked", 1.0 if c else 0.0))
         self.chk_mute_track = QCheckBox("Mute Track")
         self.chk_mute_track.toggled.connect(self.on_mute_track_toggled)
-        self.chk_mute_clip = QCheckBox("Mute Piece")
-        self.chk_mute_clip.toggled.connect(lambda c: self.param_changed.emit("muted", 1.0 if c else 0.0))
         ctrl_layout.addWidget(self.chk_lock_pos)
         ctrl_layout.addWidget(self.chk_mute_track)
-        ctrl_layout.addWidget(self.chk_mute_clip)
         self.layout.addWidget(gb_controls)
         self.layout.addWidget(self.create_slider_group("Speed", "speed", 0.1, 5.0, 1.0))
         self.layout.addWidget(self.create_slider_group("Volume", "volume", 0.0, 200.0, 100.0))
@@ -110,20 +108,18 @@ class InspectorWidget(QWidget):
         self.spin_crop_y1.valueChanged.connect(lambda v: self.param_changed.emit("crop_y1", v/100))
         self.spin_crop_x2.valueChanged.connect(lambda v: self.param_changed.emit("crop_x2", v/100))
         self.spin_crop_y2.valueChanged.connect(lambda v: self.param_changed.emit("crop_y2", v/100))
-        l1 = QLabel("Top-Left %")
-        l1.setAlignment(Qt.AlignCenter)
-        l.addWidget(l1, 0, 0, 1, 2)
-        l.addWidget(self.spin_crop_x1, 1, 0)
-        l.addWidget(self.spin_crop_y1, 1, 1)
-        l2 = QLabel("Btm-Right %")
-        l2.setAlignment(Qt.AlignCenter)
-        l.addWidget(l2, 2, 0, 1, 2)
-        l.addWidget(self.spin_crop_x2, 3, 0)
-        l.addWidget(self.spin_crop_y2, 3, 1)
+        l.addWidget(QLabel("X1:"), 0, 0)
+        l.addWidget(self.spin_crop_x1, 0, 1)
+        l.addWidget(QLabel("Y1:"), 0, 2)
+        l.addWidget(self.spin_crop_y1, 0, 3)
+        l.addWidget(QLabel("X2:"), 1, 0)
+        l.addWidget(self.spin_crop_x2, 1, 1)
+        l.addWidget(QLabel("Y2:"), 1, 2)
+        l.addWidget(self.spin_crop_y2, 1, 3)
         btn_reset = QToolButton()
         btn_reset.setText("Reset Crop")
         btn_reset.clicked.connect(self.reset_crop)
-        l.addWidget(btn_reset, 4, 0, 1, 2)
+        l.addWidget(btn_reset, 2, 0, 1, 4)
         self.layout.addWidget(gb)
 
     def make_crop_spin(self):
@@ -147,19 +143,16 @@ class InspectorWidget(QWidget):
             self.lbl_title.setText("No Selection")
             self.spin_speed.setEnabled(False)
             self.spin_volume.setEnabled(False)
-            self.chk_mute_clip.setEnabled(False)
             self.chk_mute_track.setEnabled(False)
             self.chk_lock_pos.setEnabled(False)
         else:
             self.lbl_title.setText(f"Clip: {clip_model.name}")
             self.spin_speed.setEnabled(True)
             self.spin_volume.setEnabled(True)
-            self.chk_mute_clip.setEnabled(True)
             self.chk_mute_track.setEnabled(True)
             self.chk_lock_pos.setEnabled(True)
             self.spin_speed.setValue(getattr(clip_model, 'speed', 1.0))
             self.spin_volume.setValue(int(getattr(clip_model, 'volume', 100.0)))
-            self.chk_mute_clip.setChecked(getattr(clip_model, 'muted', False))
             self.chk_lock_pos.setChecked(getattr(clip_model, 'locked', False))
             self.chk_mute_track.setChecked(track_muted)
             self.spin_crop_x1.setValue(getattr(clip_model, 'crop_x1', 0.0) * 100)

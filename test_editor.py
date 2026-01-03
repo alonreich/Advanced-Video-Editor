@@ -68,7 +68,7 @@ def test_update_collision_cache_with_collision(clip_item_fixture, other_clip_ite
     clip_item_fixture.track = -1
     clip_item_fixture.update_collision_cache()
     if hasattr(clip_item_fixture, 'cached_collisions'):
-         assert isinstance(clip_item_fixture.cached_collisions, list)
+        assert isinstance(clip_item_fixture.cached_collisions, list)
 @patch('playback_manager.FilterGraphGenerator')
 @patch('main_window.MPVPlayer')
 @patch('main_window.ProjectManager')
@@ -80,10 +80,10 @@ def test_toggle_play_starts_filter_graph(mock_conf, mock_undo, mock_pm, mock_mpv
     mock_gen_inst = mock_gen.return_value
     mock_gen_inst.build.return_value = (["input.mp4"], "filter_str", "[v]", "[a]")
     with patch('main_window.TimelineContainer') as MockTimeline, \
-         patch('main_window.InspectorWidget') as MockInspector, \
-         patch('main_window.PreviewWidget', new=MockPreviewWidget), \
-         patch('main_window.MediaPoolWidget'), \
-         patch('main_window.BinaryManager'):
+        patch('main_window.InspectorWidget') as MockInspector, \
+        patch('main_window.PreviewWidget', new=MockPreviewWidget), \
+        patch('main_window.MediaPoolWidget'), \
+        patch('main_window.BinaryManager'):
         mock_timeline = MockTimeline.return_value
         mock_timeline.get_state.return_value = [{'uid': 'c1', 'start': 0}]
         mock_timeline.playhead_pos = 5.0
@@ -101,13 +101,13 @@ def test_toggle_play_starts_filter_graph(mock_conf, mock_undo, mock_pm, mock_mpv
 
 def test_initial_history_state_on_load():
     with patch('main_window.ProjectManager') as MockPM, \
-         patch('main_window.ConfigManager'), \
-         patch('main_window.MPVPlayer'), \
-         patch('main_window.TimelineContainer') as MockTimeline, \
-         patch('main_window.InspectorWidget'), \
-         patch('main_window.PreviewWidget', new=MockPreviewWidget), \
-         patch('main_window.MediaPoolWidget'), \
-         patch('main_window.BinaryManager'):
+        patch('main_window.ConfigManager'), \
+        patch('main_window.MPVPlayer'), \
+        patch('main_window.TimelineContainer') as MockTimeline, \
+        patch('main_window.InspectorWidget'), \
+        patch('main_window.PreviewWidget', new=MockPreviewWidget), \
+        patch('main_window.MediaPoolWidget'), \
+        patch('main_window.BinaryManager'):
         mock_pm_inst = MockPM.return_value
         mock_pm_inst.get_latest_project_dir.return_value = "dummy_dir"
         mock_pm_inst.load_project_from_dir.return_value = {
@@ -121,14 +121,14 @@ def test_initial_history_state_on_load():
 
 def test_history_state_on_reset_project():
     with patch('main_window.ProjectManager') as MockPM, \
-         patch('main_window.ConfigManager'), \
-         patch('main_window.MPVPlayer'), \
-         patch('main_window.TimelineContainer') as MockTimeline, \
-         patch('main_window.InspectorWidget'), \
-         patch('main_window.PreviewWidget', new=MockPreviewWidget), \
-         patch('main_window.MediaPoolWidget'), \
-         patch('main_window.BinaryManager'), \
-         patch('PyQt5.QtWidgets.QMessageBox.question', return_value=QMessageBox.Yes):
+        patch('main_window.ConfigManager'), \
+        patch('main_window.MPVPlayer'), \
+        patch('main_window.TimelineContainer') as MockTimeline, \
+        patch('main_window.InspectorWidget'), \
+        patch('main_window.PreviewWidget', new=MockPreviewWidget), \
+        patch('main_window.MediaPoolWidget'), \
+        patch('main_window.BinaryManager'), \
+        patch('PyQt5.QtWidgets.QMessageBox.question', return_value=QMessageBox.Yes):
         mock_pm_inst = MockPM.return_value
         mock_timeline = MockTimeline.return_value
         mock_timeline.get_state.return_value = []
@@ -139,13 +139,13 @@ def test_history_state_on_reset_project():
 
 def test_history_state_on_switch_project():
     with patch('main_window.ProjectManager') as MockPM, \
-         patch('main_window.ConfigManager'), \
-         patch('main_window.MPVPlayer'), \
-         patch('main_window.TimelineContainer') as MockTimeline, \
-         patch('main_window.InspectorWidget'), \
-         patch('main_window.PreviewWidget', new=MockPreviewWidget), \
-         patch('main_window.MediaPoolWidget'), \
-         patch('main_window.BinaryManager'):
+        patch('main_window.ConfigManager'), \
+        patch('main_window.MPVPlayer'), \
+        patch('main_window.TimelineContainer') as MockTimeline, \
+        patch('main_window.InspectorWidget'), \
+        patch('main_window.PreviewWidget', new=MockPreviewWidget), \
+        patch('main_window.MediaPoolWidget'), \
+        patch('main_window.BinaryManager'):
         mock_pm_inst = MockPM.return_value
         mock_pm_inst.load_project_from_dir.return_value = {
             'timeline': [{'uid': 's1', 'name': 'Switched'}]

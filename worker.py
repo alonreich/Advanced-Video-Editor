@@ -37,10 +37,13 @@ class ThumbnailWorker(QThread):
         uid = task['uid']
         path = task['path']
         dur = task['dur']
+        
+        import hashlib
+        h = hashlib.md5(f"{path}_{dur}".encode()).hexdigest()
         cache_dir = os.path.join(self.project_dir, "cache", "thumbnails")
         os.makedirs(cache_dir, exist_ok=True)
-        out_start = os.path.join(cache_dir, f"{uid}_start.jpg")
-        out_end = os.path.join(cache_dir, f"{uid}_end.jpg")
+        out_start = os.path.join(cache_dir, f"{h}_start.jpg")
+        out_end = os.path.join(cache_dir, f"{h}_end.jpg")
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         if not os.path.exists(out_start):

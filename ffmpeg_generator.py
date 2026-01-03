@@ -20,8 +20,9 @@ class FilterGraphGenerator:
         for clip in sorted_by_layer:
             is_occluded = False
             for higher in visible_video:
-                if (higher['start'] <= clip['start'] and 
-                    (higher['start'] + higher['dur']) >= (clip['start'] + clip['dur'])):
+                if higher['track'] <= clip['track']: continue
+                if (higher['start'] < clip['start'] + clip['dur'] and
+                    higher['start'] + higher['dur'] > clip['start']):
                     if (higher.get('scale_x', 1) >= 1.0 and higher.get('scale_y', 1) >= 1.0 and
                         higher.get('opacity', 1.0) == 1.0 and
                         higher.get('fade_in', 0) == 0 and higher.get('fade_out', 0) == 0 and
@@ -44,46 +45,49 @@ class FilterGraphGenerator:
         for i, clip in enumerate(video_clips):
             idx = file_map[clip['path'].replace('\\', '/')]
             lbl = f"v{i}"
-            chain = [f"[{idx}:v]trim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}"]
-            chain.append("setpts=PTS-STARTPTS")
-            chain.append(f"setpts=PTS*(1/{clip['speed']})")
+            speed = float(clip['speed'])
+            chain = [
+                f"[{idx}:v]trim=start={clip['source_in']}:duration={clip['dur'] * speed}",
+                "setpts=PTS-STARTPTS",
+                f"setpts=PTS*{1/speed:.6f}"
+            ]
             if clip.get('crop_x2', 1) - clip.get('crop_x1', 0) < 0.99:
-                 cw = f"iw*({clip['crop_x2']}-{clip['crop_x1']})"
-                 ch = f"ih*({clip['crop_y2']}-{clip['crop_y1']})"
-                 cx = f"iw*{clip['crop_x1']}"
-                 cy = f"ih*{clip['crop_y1']}"
-                 chain.append(f"crop={cw}:{ch}:{cx}:{cy}")
+                cw = f"iw*({clip['crop_x2']}-{clip['crop_x1']})"
+                ch = f"ih*({clip['crop_y2']}-{clip['crop_y1']})"
+                cx = f"iw*{clip['crop_x1']}"
+                cy = f"ih*{clip['crop_y1']}"
+                chain.append(f"crop={cw}:{ch}:{cx}:{cy}")
             target_w = int(self.w * clip.get('scale_x', 1.0))
             target_h = int(self.h * clip.get('scale_y', 1.0))
             chain.append(f"scale={target_w}:{target_h}")
             if is_export: chain.append("setsar=1")
-            chain_str = ",".join(chain) + f"[{lbl}_p]"
-            filter_parts.append(chain_str)
+            filter_parts.append(",".join(chain) + f"[{lbl}_p]")
             x = (self.w - target_w)/2 + (self.w * clip.get('pos_x', 0))
             y = (self.h - target_h)/2 - (self.h * clip.get('pos_y', 0))
-            enable = f"between(t,{clip['start']},{clip['start'] + clip['dur']})"
-            ovl = f"{last_v}[{lbl}_p]overlay=x={int(x)}:y={int(y)}:enable='{enable}':eof_action=pass[bg{i}]"
-            filter_parts.append(ovl)
+            filter_parts.append(f"{last_v}[{lbl}_p]overlay=x={int(x)}:y={int(y)}:eof_action=pass[bg{i}]")
             last_v = f"[bg{i}]"
         audio_outs = []
-        audio_clips = sorted(audio_clips, key=lambda x: (x['track'], x['start']))
         for i, clip in enumerate(audio_clips):
             if clip.get('muted') or self.mutes.get(clip['track']): continue
             idx = file_map[clip['path'].replace('\\', '/')]
             lbl = f"a{i}"
-            achain = [f"[{idx}:a]atrim=start={clip['source_in']}:duration={clip['dur'] * clip['speed']}"]
-            achain.append("asetpts=PTS-STARTPTS")
-            achain.append(f"atempo={clip['speed']}")
-            start_ms = int(clip['start'] * 1000)
-            achain.append(f"adelay={start_ms}|{start_ms}")
+            speed = float(clip['speed'])
             vol = (clip.get('volume', 100)/100.0) * self.vols.get(clip['track'], 1.0)
-            achain.append(f"volume={vol}")
+            start_ms = int(clip['start'] * 1000)
+            achain = [
+                f"[{idx}:a]atrim=start={clip['source_in']}:duration={clip['dur'] * speed}",
+                "asetpts=PTS-STARTPTS",
+                f"atempo={speed}",
+                f"volume={vol}",
+                f"adelay={start_ms}|{start_ms}"
+            ]
             filter_parts.append(",".join(achain) + f"[{lbl}]")
             audio_outs.append(f"[{lbl}]")
-        last_a = "[out_a]"
         if audio_outs:
-            filter_parts.append(f"{''.join(audio_outs)}amix=inputs={len(audio_outs)}:dropout_transition=0{last_a}")
+            filter_parts.append(f"{''.join(audio_outs)}amix=inputs={len(audio_outs)}:dropout_transition=0[out_a]")
         else:
-            filter_parts.append(f"anullsrc=channel_layout=stereo:sample_rate=44100{last_a}")
+            filter_parts.append("anullsrc=channel_layout=stereo:sample_rate=44100[out_a]")
+        filter_parts.append(f"{last_v}copy[vo]")
+        filter_parts.append("[out_a]anull[ao]")
         full_filter = ";".join(filter_parts)
-        return inputs, full_filter, last_v, last_a
+        return inputs, full_filter, "[vo]", "[ao]"

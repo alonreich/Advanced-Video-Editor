@@ -34,30 +34,62 @@ class PlaybackManager(QObject):
             self.state_changed.emit(True)
             return
         self._rebuild_and_play(proxy_enabled, track_vols, track_mutes)
-
+            
     def _rebuild_and_play(self, proxy_enabled, track_vols, track_mutes):
         state = self.timeline.get_state()
         if not state:
             self.logger.warning("[PLAYBACK] Empty State.")
             return
-        current_time = self.timeline.playhead_pos
+        max_end = 0.0
+        for c in state:
+            try:
+                end_t = float(c.get("start", 0.0)) + float(c.get("duration", 0.0))
+                if end_t > max_end:
+                    max_end = end_t
+            except Exception:
+                continue
+        current_time = float(getattr(self.timeline, "playhead_pos", 0.0))
+        if max_end > 0.0 and (current_time < 0.0 or current_time > max_end):
+            self.logger.info(
+                f"[PLAYHEAD] Out of range ({current_time:.3f}s > {max_end:.3f}s). Snapping to 0.0s"
+            )
+            current_time = 0.0
+            try:
+                self.timeline.playhead_pos = 0.0
+            except Exception:
+                pass
+            try:
+                self.playhead_updated.emit(0.0)
+            except Exception:
+                pass
         res_txt = self.inspector.combo_res.currentText()
         w, h = (1080, 1920) if "Portrait" in res_txt else (1920, 1080)
-        if "2560" in res_txt: w, h = 2560, 1440
-        elif "3840" in res_txt: w, h = 3840, 2160
+        if "2560" in res_txt:
+            w, h = 2560, 1440
+        elif "3840" in res_txt:
+            w, h = 3840, 2160
         if proxy_enabled:
-            w //= 2; h //= 2
-        self.logger.info(f"[PLAYBACK] Rebuilding Graph at {current_time:.2f}s...")
+            w //= 2
+            h //= 2
+        preroll = 2.0
+        start_win = max(0.0, current_time - preroll)
+        if max_end > 0.0 and start_win >= max_end:
+            start_win = max(0.0, max_end - 0.001)
+        preview_dur = 60.0
+        self.logger.info(
+            f"[PLAYBACK] Rebuilding Graph at {current_time:.2f}s (Window: {start_win}s - {start_win + preview_dur}s)..."
+        )
         gen = FilterGraphGenerator(state, w, h, track_vols, track_mutes)
         try:
-            inputs, f_str, _, _ = gen.build(start_time=0.0)
+            inputs, f_str, _, _ = gen.build(start_time=start_win, duration=preview_dur)
             self.player.play_filter_graph(f_str, inputs)
-            self.player.seek(current_time)
+            self.player.seek(max(0.0, current_time - start_win))
             self.is_dirty = False
             self.timer.start()
-            self.state_changed.emit(True)
         except Exception as e:
-            self.logger.error(f"[PLAYBACK CRASH] {e}", exc_info=True)
+            self.logger.error("[PLAYBACK] Failed to rebuild graph", exc_info=True)
+            self.timer.stop()
+            self.state_changed.emit(False)
 
     def _sync_playhead(self):
         if not self.player.is_playing(): return

@@ -10,13 +10,13 @@ class TimelineContainer(QWidget):
     file_dropped = pyqtSignal(str, int, float)
     track_volume_changed = pyqtSignal(int, float)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         self.track_headers = TrackHeaders()
-        self.timeline_view = TimelineView()
+        self.timeline_view = TimelineView(main_window=main_window, track_headers=self.track_headers)
         self.main_layout.addWidget(self.track_headers)
         self.main_layout.addWidget(self.timeline_view)
         self.timeline_view.time_updated.connect(self.time_updated)

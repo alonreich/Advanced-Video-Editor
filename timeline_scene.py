@@ -2,11 +2,11 @@
 from PyQt5.QtGui import QBrush, QColor, QPen
 
 class TimelineScene(QGraphicsScene):
-    def __init__(self, num_tracks=3, track_height=50):
+    def __init__(self, num_tracks=3, track_height=0):
         super().__init__()
         self.num_tracks = num_tracks
         self.track_height = track_height
-        self.setSceneRect(0, 0, 3600*50, self.num_tracks * self.track_height)
+        self.setSceneRect(0, 0, 3600*40, self.num_tracks * self.track_height)
         self.setBackgroundBrush(QBrush(QColor(30, 30, 30)))
 
     def drawBackground(self, painter, rect):

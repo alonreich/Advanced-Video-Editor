@@ -6,21 +6,8 @@ import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 
-from system import setup_system
+from system import setup_system, StreamToLogger
 from binary_manager import BinaryManager
-
-class StreamToLogger:
-    def __init__(self, logger, level):
-        self.logger = logger
-        self.level = level
-        self.linebuf = ''
-
-    def write(self, buf):
-        for line in buf.rstrip().splitlines():
-            self.logger.log(self.level, line.rstrip())
-
-    def flush(self):
-        pass
 
 def exception_hook(exctype, value, tb):
     err_msg = "".join(traceback.format_exception(exctype, value, tb))

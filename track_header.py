@@ -19,6 +19,14 @@ class TrackHeaderWidget(QWidget):
         layout.addWidget(self.track_name_label)
         self.setLayout(layout)
         self.setStyleSheet("background-color: #3d3d3d; border-bottom: 1px solid #444; border-right: 1px solid #222;")
+        self.is_selected = False
+
+    def set_selected(self, selected):
+        self.is_selected = selected
+        if selected:
+            self.setStyleSheet("background-color: #3d3d3d; border: 2px solid yellow; border-bottom: 1px solid #444; border-right: 1px solid #222;")
+        else:
+            self.setStyleSheet("background-color: #3d3d3d; border-bottom: 1px solid #444; border-right: 1px solid #222;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -41,6 +49,10 @@ class TrackHeaders(QWidget):
         for i in range(num_tracks):
             self.add_track_header(i)
         self.main_layout.addStretch()
+
+    def set_selected(self, track_idx):
+        for i, header in enumerate(self.headers):
+            header.set_selected(i == track_idx)
 
     def add_track_header(self, idx):
         header = TrackHeaderWidget(f"Track {idx+1}", idx)

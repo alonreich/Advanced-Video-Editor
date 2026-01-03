@@ -1,18 +1,21 @@
 ﻿import os
 import logging
-from PyQt5.QtCore import QObject
+from PyQt5.QtWidgets import QWidget
+from PyQt5.QtCore import Qt
 from binary_manager import BinaryManager
 
-class MPVPlayer(QObject):
-    def __init__(self, parent_widget):
-        super().__init__(parent_widget)
+class MPVPlayer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_DontCreateNativeAncestors)
+        self.setAttribute(Qt.WA_NativeWindow)
         BinaryManager.ensure_env()
 
         import mpv
         self.logger = logging.getLogger("Advanced_Video_Editor")
-        wid = int(parent_widget.winId())
+        if not self.winId(): self.createWinId()
         self.mpv = mpv.MPV(
-            wid=wid,
+            wid=int(self.winId()),
             osc=False,
             input_default_bindings=False,
             input_vo_keyboard=False,
@@ -21,6 +24,15 @@ class MPVPlayer(QObject):
             log_handler=self._on_mpv_log,
             loglevel="warn",
         )
+        _orig_command = self.mpv.command
+
+        def _logged_command(*args):
+            try:
+                self.logger.info("[MPV-CMD] mpv.command(" + ", ".join(repr(a) for a in args) + ")")
+            except Exception:
+                pass
+            return _orig_command(*args)
+        self.mpv.command = _logged_command
         self._playing = False
 
     def _on_mpv_log(self, level, component, message):
@@ -76,6 +88,38 @@ class MPVPlayer(QObject):
 
     def is_playing(self) -> bool:
         return self._playing
+
+    def play_filter_graph(self, filter_str: str, inputs: list):
+        if not inputs:
+            return
+        try:
+            main_input = inputs[0]
+            if not main_input:
+                self.logger.error("[MPV-CMD] Refusing to play: inputs[0] is empty/None")
+                return
+            graph = (filter_str or "").replace("\n", "").strip()
+            if not graph:
+                self.logger.error("[MPV-CMD] Refusing to play: empty filter graph")
+                return
+            extras = []
+            for p in (inputs[1:] if len(inputs) > 1 else []):
+                if not p:
+                    continue
+                s = str(p).strip()
+                if not s or s.lower() == "none":
+                    continue
+                extras.append(s)
+            self.mpv.command("set", "lavfi-complex", graph)
+            if extras:
+                self.mpv.command("set", "external-files", ",".join(extras))
+            self.mpv.command("loadfile", main_input, "replace")
+            self.mpv.pause = False
+            self._playing = True
+        except Exception as e:
+            self.logger.error(f"MPV Graph Load Failed: {e}", exc_info=True)
+
+    def get_time(self) -> float:
+        return self.mpv.time_pos or 0.0
 
     def apply_crop(self, clip_model):
         try:

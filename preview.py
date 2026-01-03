@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
+﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QStyle
 from PyQt5.QtGui import QPainter, QColor, QPen, QRegion
 from PyQt5.QtCore import Qt, QRect, QPointF, QRectF, pyqtSignal, QTimer
 
@@ -9,7 +9,8 @@ class PopOutPlayerWindow(QWidget):
         self.preview_widget = preview_widget
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0,0,0,0)
-        snap_back_button = QPushButton("Snap Back")
+        snap_back_button = QPushButton("Pop In")
+        snap_back_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
         snap_back_button.clicked.connect(self.preview_widget.toggle_popout)
         layout.addWidget(self.player)
         layout.addWidget(snap_back_button)
@@ -67,8 +68,12 @@ class SafeOverlay(QWidget):
         w, h = self.width(), self.height()
         target_w, target_h = self.target_res
         if target_w == 0 or target_h == 0: return self.rect()
-        scale = min(w / target_w, h / target_h)
-        nw, nh = target_w * scale, target_h * scale
+        if self.mode == "Portrait":
+            scale = min(h / target_h, w / target_w)
+            nw, nh = target_w * scale, target_h * scale
+        else:
+            scale = min(w / target_w, h / target_h)
+            nw, nh = target_w * scale, target_h * scale
         nx, ny = (w - nw) / 2, (h - nh) / 2
         return QRectF(nx, ny, nw, nh)
 
@@ -131,16 +136,20 @@ class SafeOverlay(QWidget):
         y = v_rect.top() + (c.crop_y1 * v_rect.height())
         w = (c.crop_x2 - c.crop_x1) * v_rect.width()
         h = (c.crop_y2 - c.crop_y1) * v_rect.height()
-        r = QRectF(x, y, w, h)
+        self.crop_rect = QRectF(x, y, w, h)
         pen = QPen(Qt.yellow, 2, Qt.CustomDashLine)
         pen.setDashPattern([5, 5])
         pen.setDashOffset(self.dash_offset)
         p.setPen(pen)
-        p.drawRect(r)
+        p.drawRect(self.crop_rect)
+        self.update_handles(for_crop=True)
+        p.setBrush(Qt.yellow)
+        for handle in self.handles:
+            p.drawRect(handle)
 
-    def update_handles(self):
+    def update_handles(self, for_crop=False):
         self.handles = []
-        r = self.transform_rect
+        r = self.crop_rect if for_crop else self.transform_rect
         hs = self.handle_size
         self.handles.append(QRectF(r.left() - hs/2, r.top() - hs/2, hs, hs))
         self.handles.append(QRectF(r.right() - hs/2, r.top() - hs/2, hs, hs))
@@ -152,6 +161,13 @@ class SafeOverlay(QWidget):
             if not self.selected_clip: return
             self.drag_start_pos = event.pos()
             if self.crop_mode:
+                for i, handle in enumerate(self.handles):
+                    if handle.contains(event.pos()):
+                        self.dragging = True
+                        self.drag_handle = i
+                        self.drag_start_rect = QRectF(self.crop_rect)
+                        self.interaction_started.emit()
+                        return
                 self.dragging = True
                 self.drag_handle = "crop_draw"
                 self.interaction_started.emit()
@@ -180,24 +196,49 @@ class SafeOverlay(QWidget):
             if not self.dragging: return
             v_rect = self.get_video_rect()
             if v_rect.width() == 0 or v_rect.height() == 0: return
-            if self.crop_mode and self.drag_handle == "crop_draw":
-                start_x, start_y = self.to_video_coords(self.drag_start_pos)
-                curr_x, curr_y = self.to_video_coords(event.pos())
-                start_x = max(0.0, min(1.0, start_x))
-                start_y = max(0.0, min(1.0, start_y))
-                curr_x = max(0.0, min(1.0, curr_x))
-                curr_y = max(0.0, min(1.0, curr_y))
-                x1 = min(start_x, curr_x)
-                y1 = min(start_y, curr_y)
-                x2 = max(start_x, curr_x)
-                y2 = max(start_y, curr_y)
-                if (x2 - x1) > 0.05 and (y2 - y1) > 0.05:
+            if self.crop_mode:
+                if self.drag_handle == "crop_draw":
+                    start_x, start_y = self.to_video_coords(self.drag_start_pos)
+                    curr_x, curr_y = self.to_video_coords(event.pos())
+                    start_x = max(0.0, min(1.0, start_x))
+                    start_y = max(0.0, min(1.0, start_y))
+                    curr_x = max(0.0, min(1.0, curr_x))
+                    curr_y = max(0.0, min(1.0, curr_y))
+                    x1 = min(start_x, curr_x)
+                    y1 = min(start_y, curr_y)
+                    x2 = max(start_x, curr_x)
+                    y2 = max(start_y, curr_y)
+                    if (x2 - x1) > 0.05 and (y2 - y1) > 0.05:
+                        self.param_changed.emit("crop_x1", x1)
+                        self.param_changed.emit("crop_y1", y1)
+                        self.param_changed.emit("crop_x2", x2)
+                        self.param_changed.emit("crop_y2", y2)
+                    self.update()
+                    return
+                elif isinstance(self.drag_handle, int):
+                    delta = event.pos() - self.drag_start_pos
+                    new_rect = QRectF(self.drag_start_rect)
+                    aspect_ratio = self.target_res[0] / self.target_res[1]
+                    if self.drag_handle == 0:
+                        new_rect.setTopLeft(new_rect.topLeft() + delta)
+                        new_rect.setWidth(new_rect.height() * aspect_ratio)
+                    elif self.drag_handle == 1:
+                        new_rect.setTopRight(new_rect.topRight() + delta)
+                        new_rect.setWidth(new_rect.height() * aspect_ratio)
+                    elif self.drag_handle == 2:
+                        new_rect.setBottomRight(new_rect.bottomRight() + delta)
+                        new_rect.setWidth(new_rect.height() * aspect_ratio)
+                    elif self.drag_handle == 3:
+                        new_rect.setBottomLeft(new_rect.bottomLeft() + delta)
+                        new_rect.setWidth(new_rect.height() * aspect_ratio)
+                    x1, y1 = self.to_video_coords(new_rect.topLeft())
+                    x2, y2 = self.to_video_coords(new_rect.bottomRight())
                     self.param_changed.emit("crop_x1", x1)
                     self.param_changed.emit("crop_y1", y1)
                     self.param_changed.emit("crop_x2", x2)
                     self.param_changed.emit("crop_y2", y2)
-                self.update()
-                return
+                    self.update()
+                    return
             delta = event.pos() - self.drag_start_pos
             dx_norm = delta.x() / v_rect.width()
             dy_norm = delta.y() / v_rect.height()
@@ -221,7 +262,7 @@ class SafeOverlay(QWidget):
 
     def mouseReleaseEvent(self, event):
         if self.dragging:
-             self.interaction_ended.emit()
+            self.interaction_ended.emit()
         self.dragging = False
         self.drag_handle = None
     
@@ -245,14 +286,23 @@ class PreviewWidget(QWidget):
         self.container = QWidget()
         l = QVBoxLayout(self.container)
         l.setContentsMargins(0,0,0,0)
-        l.addWidget(self.player)
-        self.overlay = SafeOverlay(self.player)
+        if self.player:
+            l.addWidget(self.player)
+        self.overlay = SafeOverlay(self.player if self.player else self.container)
         self.overlay.param_changed.connect(self.param_changed)
         self.overlay.interaction_started.connect(self.interaction_started)
         self.overlay.interaction_ended.connect(self.interaction_ended)
         self.popout_button = QPushButton("Pop Out", self.overlay)
+        self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
         self.popout_button.clicked.connect(self.toggle_popout)
         layout.addWidget(self.container)
+
+    def set_player(self, player):
+        self.player = player
+        self.container.layout().addWidget(player)
+        self.overlay.setParent(player)
+        self.overlay.resize(player.size())
+        self.overlay.show()
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setContentsMargins(5, 5, 5, 5)
         btn_style_small = "QPushButton { background: #333; color: white; border: 1px solid #555; border-radius: 4px; font-weight: bold; } QPushButton:hover { background: #444; }"
@@ -282,18 +332,22 @@ class PreviewWidget(QWidget):
         ctrl_layout.addWidget(self.btn_rw)
         ctrl_layout.addWidget(self.btn_play)
         ctrl_layout.addWidget(self.btn_ff)
-        layout.addLayout(ctrl_layout)
+        self.layout().addLayout(ctrl_layout)
 
     def toggle_popout(self):
         if self.popout_window is None:
             self.popout_window = PopOutPlayerWindow(self.player, self)
             self.player.setParent(self.popout_window)
             self.popout_window.show()
+            self.popout_button.setText("Pop In")
+            self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
         else:
             self.player.setParent(self.container)
             self.container.layout().addWidget(self.player)
             self.popout_window.close()
             self.popout_window = None
+            self.popout_button.setText("Pop Out")
+            self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
 
     def resizeEvent(self, event):
         self.overlay.resize(self.size())

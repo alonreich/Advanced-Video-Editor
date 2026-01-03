@@ -1,4 +1,5 @@
 ﻿from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsDropShadowEffect
+import time
 from PyQt5.QtGui import QBrush, QColor, QPen, QFont, QLinearGradient, QPixmap, QPainter
 from PyQt5.QtCore import Qt, QRectF, QPointF
 from model import ClipModel
@@ -9,6 +10,8 @@ class ClipItem(QGraphicsRectItem):
         super().__init__(0, 0, model.duration * scale, 30)
         self.model = model
         self.uid = model.uid
+        self._last_render_time = 0
+        self._is_interacting = False
         self.name = model.name
         self.start = model.start
         self.duration = model.duration
@@ -17,7 +20,7 @@ class ClipItem(QGraphicsRectItem):
         self.volume = model.volume
         self.scale = scale
         self.cached_pixmap = None
-        self.setPos(self.start * scale, self.track * 40 + 35)
+        self.setPos(self.start * scale, self.track * 40 + 32)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
@@ -56,6 +59,10 @@ class ClipItem(QGraphicsRectItem):
 
     def update_cache(self):
         """Offloads drawing to ClipPainter and caches result."""
+        now = time.time()
+        if self._is_interacting and (now - self._last_render_time) < 0.033:
+            return
+        self._last_render_time = now
         rect = self.rect()
         if rect.width() <= 0 or rect.height() <= 0: return
         self.cached_pixmap = QPixmap(int(rect.width()), int(rect.height()))
@@ -64,9 +71,10 @@ class ClipItem(QGraphicsRectItem):
         painter.setRenderHint(QPainter.Antialiasing)
         is_audio = getattr(self.model, 'media_type', 'video') == 'audio'
         ClipPainter.draw_base_rect(painter, rect, self.isSelected(), is_audio)
-        ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
-        ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
-        ClipPainter.draw_fades(painter, rect, self.model, self.scale)
+        if not self._is_interacting:
+            ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
+            ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
+            ClipPainter.draw_fades(painter, rect, self.model, self.scale)
         painter.setPen(Qt.white)
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         fi_w = self.model.fade_in * self.scale
@@ -98,7 +106,7 @@ class ClipItem(QGraphicsRectItem):
         fi_x = self.model.fade_in * self.scale
         fo_x = rect.width() - (self.model.fade_out * self.scale)
         if (abs(pos.x() - fi_x) < 15 and abs(pos.y() - 6) < 15) or \
-           (abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15):
+            (abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15):
             self.setCursor(Qt.PointingHandCursor)
         elif pos.x() < margin:
             self.setCursor(Qt.SizeHorCursor)
@@ -107,9 +115,9 @@ class ClipItem(QGraphicsRectItem):
         else:
             self.setCursor(Qt.ArrowCursor)
         super().hoverMoveEvent(event)
-        self.update_collision_cache()
 
     def mousePressEvent(self, event):
+        self._is_interacting = True
         for item in self.scene().items():
             item.setZValue(0)
         self.setZValue(10)
@@ -205,6 +213,7 @@ class ClipItem(QGraphicsRectItem):
             self.update()
 
     def mouseReleaseEvent(self, event):
+        self._is_interacting = False
         super().mouseReleaseEvent(event)
         if self.x() < 10: self.setX(0)
         current_track_idx = round((self.y() - 35) / 40)
@@ -217,8 +226,8 @@ class ClipItem(QGraphicsRectItem):
             iterations = 0
             while not safe and iterations < 5:
                 collisions = [i for i in self.scene().items() 
-                              if isinstance(i, ClipItem) and i != self 
-                              and i.track == self.track and i.collidesWithItem(self)]
+                    if isinstance(i, ClipItem) and i != self 
+                    and i.track == self.track and i.collidesWithItem(self)]
                 if not collisions:
                     safe = True
                 else:
