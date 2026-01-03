@@ -51,39 +51,73 @@ class ProjectManager:
     def import_asset(self, source_path):
         if not self.current_project_dir:
             self.create_project()
-        fname = os.path.basename(source_path)
+        if self.assets_dir is None and self.current_project_dir:
+            self.assets_dir = os.path.join(self.current_project_dir, "assets")
+            os.makedirs(self.assets_dir, exist_ok=True)
+        abs_path = os.path.abspath(source_path)
+        if not os.path.exists(abs_path):
+            self.logger.error(f"Asset not found: {source_path}")
+            return source_path
+        fname = os.path.basename(abs_path)
+        name, ext = os.path.splitext(fname)
         dest_path = os.path.join(self.assets_dir, fname)
-        if not os.path.exists(dest_path):
-            self.logger.info(f"Staging asset: {fname}")
-            try:
-                shutil.copy2(source_path, dest_path)
-            except Exception as e:
-                self.logger.error(f"Failed to copy asset: {e}")
-                return source_path
-        return dest_path
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = os.path.join(self.assets_dir, f"{name}_{counter}{ext}")
+            counter += 1
+        try:
+            shutil.copy2(abs_path, dest_path)
+            self.logger.info(f"Imported asset: {abs_path} -> {dest_path}")
+            return dest_path
+        except Exception as e:
+            self.logger.error(f"Failed to import asset {abs_path}: {e}")
+            return abs_path
 
-    def save_state(self, timeline_state):
+    def save_state(self, timeline_state, ui_state=None, is_autosave=False):
         if not self.current_project_dir: return
-        fpath = os.path.join(self.current_project_dir, "project.json")
+        filename = "project.autosave.json" if is_autosave else "project.json"
+        fpath = os.path.join(self.current_project_dir, filename)
         data = {
             "id": self.project_id,
             "name": self.project_name,
             "last_saved": str(datetime.datetime.now()),
-            "timeline": timeline_state
+            "timeline": timeline_state,
+            "ui_state": ui_state or {}
         }
-        with open(fpath, 'w') as f:
-            json.dump(data, f, indent=4)
+        temp_path = fpath + ".tmp"
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(data, f, indent=4)
+            if os.path.exists(fpath):
+                os.replace(temp_path, fpath)
+            else:
+                os.rename(temp_path, fpath)
+            if not is_autosave:
+                auto_path = os.path.join(self.current_project_dir, "project.autosave.json")
+                if os.path.exists(auto_path):
+                    os.remove(auto_path)
+        except Exception as e:
+            self.logger.error(f"Failed to save project: {e}")
 
     def load_latest(self):
         return self.load_project_from_dir(self.get_latest_project_dir())
 
     def get_latest_project_dir(self):
-        all_projs = sorted([
+        def get_real_mtime(path):
+            candidates = [os.path.getmtime(path)]
+            p_json = os.path.join(path, "project.json")
+            a_json = os.path.join(path, "project.autosave.json")
+            if os.path.exists(p_json): candidates.append(os.path.getmtime(p_json))
+            if os.path.exists(a_json): candidates.append(os.path.getmtime(a_json))
+            return max(candidates)
+        all_projs = [
             os.path.join(self.projects_root, d) 
             for d in os.listdir(self.projects_root) 
             if os.path.isdir(os.path.join(self.projects_root, d))
-        ], key=os.path.getmtime, reverse=True)
-        return all_projs[0] if all_projs else None
+        ]
+        if not all_projs: return None
+        sorted_projs = sorted(all_projs, key=get_real_mtime, reverse=True)
+        return sorted_projs[0]
 
     def load_project_from_dir(self, proj_dir):
         if not proj_dir: return None

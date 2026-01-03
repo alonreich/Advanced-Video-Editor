@@ -62,7 +62,13 @@ class ThumbnailWorker(QThread):
 
     def run_ffmpeg(self, cmd, startup_info):
         try:
+            import shutil
+            bin_full = shutil.which(cmd[0]) or cmd[0]
+            cmd[0] = bin_full
+            self.logger.info(f"[BINARY EXEC] CMD: {' '.join(cmd)}")
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
                            startupinfo=startup_info, check=True)
-        except Exception:
+            self.logger.info("[BINARY SUCCESS] Thumbnail ffmpeg command finished.")
+        except Exception as e:
+            self.logger.error(f"[BINARY FAILURE] Thumbnail ffmpeg command failed: {e}")
             pass

@@ -3,6 +3,8 @@ import json
 import os
 import traceback
 import logging
+import shutil
+import hashlib
 from PyQt5.QtCore import QThread, pyqtSignal
 
 class ProbeWorker(QThread):
@@ -14,29 +16,30 @@ class ProbeWorker(QThread):
 
     def run(self):
         try:
+            ffprobe_bin = shutil.which('ffprobe') or 'ffprobe'
             cmd = [
-                'ffprobe', 
-                '-v', 'quiet', 
-                '-print_format', 'json', 
-                '-show_format', 
-                '-show_streams', 
+                ffprobe_bin,
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                '-show_streams',
                 self.path
             ]
+            logger = logging.getLogger("Advanced_Video_Editor")
+            log_cmd = ' '.join(f'"{c}"' if ' ' in c else c for c in cmd)
+            logger.info(f"[BINARY EXEC] CMD: {log_cmd}")
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             output = subprocess.check_output(cmd, startupinfo=si)
+            logger.info(f"[BINARY SUCCESS] ffprobe executed successfully for: {self.path}")
             data = json.loads(output)
-            
-            # Safe extraction helper to handle "N/A" and missing keys
             def get_val(d, key, type_func, default):
                 val = d.get(key, default)
                 if val == 'N/A' or val is None: return default
                 try: return type_func(val)
                 except: return default
-
             fmt = data.get('format', {})
             streams = data.get('streams', [])
-            
             info = {
                 'path': self.path,
                 'duration': get_val(fmt, 'duration', float, 0.0),
@@ -46,24 +49,19 @@ class ProbeWorker(QThread):
                 'has_audio': False,
                 'has_video': False
             }
-            
             for s in streams:
                 if s.get('codec_type') == 'video':
                     info['has_video'] = True
-                    # Only update dimensions if we found a video stream with valid size
                     w = get_val(s, 'width', int, 0)
                     h = get_val(s, 'height', int, 0)
                     if w > 0: info['width'] = w
                     if h > 0: info['height'] = h
                 elif s.get('codec_type') == 'audio':
                     info['has_audio'] = True
-            
             self.result.emit(info)
         except Exception as e:
             logging.getLogger("Advanced_Video_Editor").error(f"Probe Failed:\n{traceback.format_exc()}")
             self.result.emit({'error': str(e)})
-
-import hashlib
 
 class WaveformWorker(QThread):
     finished = pyqtSignal(str, str)
@@ -72,38 +70,30 @@ class WaveformWorker(QThread):
         super().__init__()
         self.path = audio_path
         self.uid = uid
-        
-        # Use MD5 hash of the file path for caching. 
-        # Same file = Same waveform image. No redundant rendering.
         path_hash = hashlib.md5(audio_path.encode('utf-8')).hexdigest()
-        
         cache_dir = os.path.join(project_dir, "cache", "waveforms")
         os.makedirs(cache_dir, exist_ok=True)
-        
-        # Map hash to filename
         self.out = os.path.join(cache_dir, f"{path_hash}.png")
 
     def run(self):
-        # Cache Hit: Serve immediately
         if os.path.exists(self.out):
             self.finished.emit(self.uid, self.out)
             return
-
-        # Cache Miss: Generate High-Res Waveform (4000px width)
-        # Colors: Cyber-Cyan (#00FFFF) to Deep Blue (#0088FF)
+        ffmpeg_bin = shutil.which('ffmpeg') or 'ffmpeg'
         cmd = [
-            'ffmpeg', '-y', '-i', self.path,
-            '-filter_complex', 'showwavespic=s=4000x240:colors=#00FFFF|#0088FF:split_channels=1',
+            ffmpeg_bin, '-y', '-i', self.path,
+            '-filter_complex', 'aformat=channel_layouts=mono,compand,showwavespic=s=4000x240:colors=#00FFFF|#0088FF:split_channels=1:scale=sqrt',
             '-frames:v', '1',
             self.out
         ]
         try:
-            # Creation flags to hide console window on Windows
+            logging.getLogger("Advanced_Video_Editor").info(f"[BINARY EXEC] CMD: {' '.join(cmd)}")
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
                            startupinfo=si, check=True)
+            logging.getLogger("Advanced_Video_Editor").info(f"[BINARY SUCCESS] Waveform generated: {self.out}")
             self.finished.emit(self.uid, self.out)
-        except Exception:
+        except Exception as e:
+            logging.getLogger("Advanced_Video_Editor").error(f"[BINARY FAILURE] Waveform generation failed. Error: {e}")
             logging.getLogger("Advanced_Video_Editor").error(f"Waveform Generation Failed for {self.path}:\n{traceback.format_exc()}")

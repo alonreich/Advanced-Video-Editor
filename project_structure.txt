@@ -1,0 +1,93 @@
+This file maps each Python file in the project to its roles and duties.
+
+`advanced_video_editor.py`:
+- The main entry point of the application.
+- Sets up the logging system and a global exception hook.
+- Initializes the QApplication, sets a dark theme, and creates the `MainWindow`.
+- Launches the application's main event loop.
+
+`main_window.py`:
+- Defines the `MainWindow` class, the central hub of the application.
+- Initializes and connects all major UI components (`Timeline`, `Inspector`, `Preview`, `MediaPool`).
+- Manages application state, including project loading/saving (`ProjectManager`) and undo/redo history (`UndoStack`).
+- Handles user actions from the toolbar (Import, Export, Undo, Tool selection).
+- Contains the core logic for preview playback, including generating temporary render files (`RenderWorker`) when the timeline is "dirty".
+- Responds to signals from other widgets (e.g., clip selection, parameter changes) and updates the application state accordingly.
+
+`model.py`:
+- Defines the `ClipModel` dataclass.
+- This class is the fundamental data structure representing a single media clip on the timeline.
+- It holds all properties of a clip, such as its source path, start time, duration, track, visual properties (scale, position), and audio volume.
+- Includes a `from_dict` method to easily create instances from data loaded from project files.
+
+`clip_item.py`:
+- Defines the `ClipItem` class, a `QGraphicsRectItem` that visually represents a `ClipModel` on the timeline.
+- Responsible for painting the clip's appearance, including its name, thumbnails, and audio waveform.
+- Handles all direct user interactions with a clip, such as selecting, moving, resizing (trimming), and adjusting fade-in/fade-out handles.
+- Implements snapping logic to align with other clips during drag operations.
+- Visually indicates when a clip is overshadowed by another clip on a higher track.
+
+`timeline_view.py`:
+- Defines `TimelineView` (a `QGraphicsView`) and `TimelineScene` (a `QGraphicsScene`).
+- This is the main interactive timeline area where clips are arranged.
+- `TimelineScene` draws the background grid of tracks and time units.
+- `TimelineView` manages user navigation (panning, zooming with Ctrl+Scroll), playhead control, and tool modes (Pointer, Razor).
+- It handles dropping media files from the Media Pool onto the timeline.
+- Contains the logic for snapping the playhead or clips to edges of other clips.
+- Manages the state of all `ClipItem` objects, providing methods to get and load the entire timeline's state.
+
+`track_header.py`:
+- Defines `TrackHeaders` and `TrackHeaderWidget`.
+- `TrackHeaderWidget` is the UI for a single track's controls (name, Mute, Solo, Lock) on the left side of the timeline. It can be dragged to reorder tracks.
+- `TrackHeaders` is the vertical container that holds and manages all the individual track headers. It orchestrates the drag-and-drop reordering logic.
+
+`timeline_container.py`:
+- A simple `QWidget` that holds the `TrackHeaders` and `TimelineView` together in a horizontal layout.
+- Acts as a bridge, forwarding signals between its child widgets and the `MainWindow`.
+
+`preview.py`:
+- Defines the `PreviewWidget`, `SafeOverlay`, and `PopOutPlayerWindow`.
+- `PreviewWidget` contains the video player instance (`MPVPlayer`) and playback controls (Play/Pause, Seek buttons).
+- `SafeOverlay` is a crucial transparent widget that sits on top of the video. It is responsible for drawing and handling the interactive transform (move/scale) and crop controls for the selected video clip.
+- It calculates the correct aspect ratio (letterboxing) for the video display.
+- `PopOutPlayerWindow` is the separate window that can be opened for a larger preview.
+
+`player.py`:
+- Defines `MPVPlayer`, a `QFrame` that embeds and wraps the `libmpv` video player.
+- Provides a simple Python API to control playback: `load`, `play`, `pause`, `seek`, `set_volume`, etc.
+- It receives commands from the `MainWindow` to control the video preview.
+
+`inspector.py`:
+- Defines the `InspectorWidget`, which is the property panel typically shown on the right.
+- It displays the properties (speed, volume, crop, etc.) of the currently selected clip.
+- It also shows global project settings, most importantly the output resolution (e.g., Landscape 1080p, Portrait 1080p).
+- Emits signals when a parameter is changed by the user, which are then handled by the `MainWindow`.
+
+`exporter.py`:
+- Defines `FFmpegBuilder` and `RenderWorker`.
+- `FFmpegBuilder` is the core of the export functionality. It takes the list of all `ClipModel`s from the timeline and constructs a complex FFmpeg command string.
+- It is responsible for translating the timeline's visual arrangement into FFmpeg's filter language, including scaling, cropping, overlays, fades, and audio mixing.
+- `RenderWorker` is a `QThread` that runs the generated FFmpeg command in a separate process, preventing the UI from freezing during export. It reports progress and completion/error signals.
+
+`prober.py`:
+- Defines `ProbeWorker` and `WaveformWorker`.
+- `ProbeWorker` runs `ffprobe` in a background thread to get metadata (duration, resolution, etc.) from a media file when it's imported.
+- `WaveformWorker` runs `ffmpeg` in a background thread to generate a visual waveform image from an audio file. The resulting image is cached and displayed on the corresponding `ClipItem`.
+
+`project.py`:
+- Defines the `ProjectManager` class.
+- Handles all file-system-level project operations: creating new projects, saving and loading the `project.json` file, and managing the associated `assets` folder for each project.
+- Implements logic for "Save As" and for cleaning up old projects.
+
+`history.py`:
+- Implements the `UndoStack` class for undo/redo functionality.
+- It works by taking a snapshot of the entire timeline state (a list of `ClipModel` dictionaries), compressing it with `zlib`, and pushing it onto a stack.
+- This is a simple, robust, but potentially memory-intensive approach.
+
+`system.py`:
+- Contains general-purpose utilities.
+- `setup_system` configures the application-wide logging system.
+- `ConfigManager` provides a simple, thread-safe way to load and save application settings (like window layout) to a JSON file.
+
+`worker.py`:
+- Defines `ThumbnailWorker`, a `QThread` that generates start and end thumbnails for video clips in the background. This prevents the UI from freezing when importing long videos.

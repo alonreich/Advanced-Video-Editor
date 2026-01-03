@@ -1,77 +1,105 @@
 ﻿import os
-import sys
 import logging
-from PyQt5.QtWidgets import QFrame
-bin_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'binaries')
-os.environ['PATH'] = bin_path + os.pathsep + os.environ['PATH']
-os.environ['MPV_HOME'] = bin_path
+from PyQt5.QtCore import QObject
+from binary_manager import BinaryManager
 
-import mpv
-class MPVPlayer(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+class MPVPlayer(QObject):
+    def __init__(self, parent_widget):
+        super().__init__(parent_widget)
+        BinaryManager.ensure_env()
+
+        import mpv
         self.logger = logging.getLogger("Advanced_Video_Editor")
-        opts = {
-            "input_default_bindings": True,
-            "input_vo_keyboard": True,
-            "osc": True,
-            "keep_open": "yes",
-            "hr_seek": "yes",
-            "hwdec": "auto",
-            "vd_lavc_threads": 4
-        }
-        self.mpv = None
+        wid = int(parent_widget.winId())
+        self.mpv = mpv.MPV(
+            wid=wid,
+            osc=False,
+            input_default_bindings=False,
+            input_vo_keyboard=False,
+            keep_open=True,
+            pause=True,
+            log_handler=self._on_mpv_log,
+            loglevel="warn",
+        )
+        self._playing = False
+
+    def _on_mpv_log(self, level, component, message):
         try:
-            self.mpv = mpv.MPV(wid=str(int(self.winId())), **opts)
-        except Exception as e:
-            self.logger.critical(f"MPV Init Failed: {e}")
+            self.logger.debug(f"[mpv:{level}:{component}] {message}")
+        except Exception:
+            pass
 
-    def load(self, path):
-        if not self.mpv: return
-        if not os.path.exists(path):
-            self.logger.error(f"File not found: {path}")
+    def load(self, path: str):
+        if not path:
             return
-        self.mpv.play(path)
+        self.mpv.command("loadfile", path, "replace")
+        self._playing = False
+
+    def play(self):
+        self.mpv.pause = False
+        self._playing = True
+
+    def pause(self):
         self.mpv.pause = True
+        self._playing = False
 
-    def play(self): 
-        if self.mpv: self.mpv.pause = False
-    def pause(self): 
-        if self.mpv: self.mpv.pause = True
-    def stop(self): 
-        if self.mpv: self.mpv.stop()
-    
-    def seek(self, time_s):
-        if self.mpv:
-            self.mpv.seek(time_s, reference="absolute", precision="exact")
-    
-    def get_time(self):
-        if not self.mpv: return 0.0
-        t = self.mpv.time_pos
-        return t if t is not None else 0.0
+    def stop(self):
+        try:
+            self.mpv.command("stop")
+        except Exception:
+            pass
+        self._playing = False
 
-    def is_playing(self):
-        if not self.mpv: return False
-        return not self.mpv.pause
+    def seek(self, seconds: float):
+        try:
+            self.mpv.command("seek", float(seconds), "absolute")
+        except Exception:
+            pass
 
-    def set_speed(self, speed):
-        if self.mpv: self.mpv.speed = float(speed)
+    def seek_relative(self, seconds: float):
+        try:
+            self.mpv.command("seek", float(seconds), "relative")
+        except Exception:
+            pass
 
-    def set_volume(self, vol):
-        if self.mpv: self.mpv.volume = int(vol)
+    def set_speed(self, speed: float):
+        try:
+            self.mpv.speed = max(0.1, float(speed))
+        except Exception:
+            pass
+
+    def set_volume(self, volume: float):
+        try:
+            self.mpv.volume = max(0.0, float(volume))
+        except Exception:
+            pass
+
+    def is_playing(self) -> bool:
+        return self._playing
 
     def apply_crop(self, clip_model):
-        if not self.mpv: return
-        if clip_model and (clip_model.crop_x1 != 0.0 or clip_model.crop_y1 != 0.0 or clip_model.crop_x2 != 1.0 or clip_model.crop_y2 != 1.0):
-            # Enforce Integers for MPV crop command
-            w = int(clip_model.width * (clip_model.crop_x2 - clip_model.crop_x1))
-            h = int(clip_model.height * (clip_model.crop_y2 - clip_model.crop_y1))
-            x = int(clip_model.width * clip_model.crop_x1)
-            y = int(clip_model.height * clip_model.crop_y1)
-            vf_str = f"crop={w}:{h}:{x}:{y}"
-            self.mpv.vf = vf_str
-        else:
-            self.mpv.vf = ""
+        try:
+            x1 = float(getattr(clip_model, "crop_x1", 0.0))
+            y1 = float(getattr(clip_model, "crop_y1", 0.0))
+            x2 = float(getattr(clip_model, "crop_x2", 1.0))
+            y2 = float(getattr(clip_model, "crop_y2", 1.0))
+            x1 = min(max(x1, 0.0), 1.0)
+            y1 = min(max(y1, 0.0), 1.0)
+            x2 = min(max(x2, 0.0), 1.0)
+            y2 = min(max(y2, 0.0), 1.0)
+            w_expr = f"iw*({x2 - x1})"
+            h_expr = f"ih*({y2 - y1})"
+            x_expr = f"iw*({x1})"
+            y_expr = f"ih*({y1})"
+            self.mpv.vf = f"crop={w_expr}:{h_expr}:{x_expr}:{y_expr}"
+        except Exception:
+            try:
+                self.mpv.vf = ""
+            except Exception:
+                pass
 
-    def destroy(self):
-        if self.mpv: self.mpv.terminate()
+    def cleanup(self):
+        try:
+            self.mpv.terminate()
+        except Exception:
+            pass

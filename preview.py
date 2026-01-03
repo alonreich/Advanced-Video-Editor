@@ -1,5 +1,5 @@
 ﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
-from PyQt5.QtGui import QPainter, QColor, QPen
+from PyQt5.QtGui import QPainter, QColor, QPen, QRegion
 from PyQt5.QtCore import Qt, QRect, QPointF, QRectF, pyqtSignal, QTimer
 
 class PopOutPlayerWindow(QWidget):
@@ -22,6 +22,8 @@ class PopOutPlayerWindow(QWidget):
 
 class SafeOverlay(QWidget):
     param_changed = pyqtSignal(str, float)
+    interaction_started = pyqtSignal()
+    interaction_ended = pyqtSignal()
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -38,10 +40,16 @@ class SafeOverlay(QWidget):
         self.handles = []
         self.handle_size = 10
         self.dash_offset = 0
-        self.target_res = (1920, 1080) # Default
+        self.target_res = (1920, 1080)
+        self.mode = "Landscape"
         self.dash_timer = QTimer(self)
         self.dash_timer.timeout.connect(self.update_dash_offset)
         self.dash_timer.start(100)
+
+    def set_mode(self, width, height, mode_name):
+        self.target_res = (width, height)
+        self.mode = "Portrait" if "Portrait" in mode_name else "Landscape"
+        self.update()
 
     def update_dash_offset(self):
         self.dash_offset = (self.dash_offset + 1) % 10
@@ -56,18 +64,15 @@ class SafeOverlay(QWidget):
         self.update()
 
     def get_video_rect(self):
-        # Calculate the actual video drawing area (Letterboxing)
         w, h = self.width(), self.height()
         target_w, target_h = self.target_res
         if target_w == 0 or target_h == 0: return self.rect()
-        
         scale = min(w / target_w, h / target_h)
         nw, nh = target_w * scale, target_h * scale
         nx, ny = (w - nw) / 2, (h - nh) / 2
         return QRectF(nx, ny, nw, nh)
 
     def to_video_coords(self, widget_pos):
-        # Map widget coordinate to normalized video coordinate (0.0 - 1.0)
         v_rect = self.get_video_rect()
         norm_x = (widget_pos.x() - v_rect.left()) / v_rect.width()
         norm_y = (widget_pos.y() - v_rect.top()) / v_rect.height()
@@ -75,65 +80,58 @@ class SafeOverlay(QWidget):
 
     def paintEvent(self, e):
         super().paintEvent(e)
-        if not self.selected_clip: return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        
-        # Clip painting to video area
         v_rect = self.get_video_rect()
+        if self.mode == "Portrait":
+            self.draw_portrait_guides(p, v_rect)
+        if not self.selected_clip: return
         p.setClipRect(v_rect)
-        
         if self.crop_mode:
             self.draw_crop_controls(p, v_rect)
         else:
             self.draw_transform_controls(p, v_rect)
 
+    def draw_portrait_guides(self, p, v_rect):
+        """Draws semi-transparent overlays on the sides to indicate cut-off areas."""
+        widget_rect = self.rect()
+        full_region = QRegion(widget_rect)
+        safe_region = QRegion(v_rect.toRect())
+        dimmed_region = full_region.subtracted(safe_region)
+        p.setClipRegion(dimmed_region)
+        p.fillRect(widget_rect, QColor(0, 0, 0, 200))
+        p.setClipRect(widget_rect)
+        p.setPen(QPen(QColor(255, 255, 255, 100), 2, Qt.DashLine))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(v_rect)
+
     def draw_transform_controls(self, p, v_rect):
         sx, sy = self.selected_clip.scale_x, self.selected_clip.scale_y
         px, py = self.selected_clip.pos_x, self.selected_clip.pos_y
-        
-        # Map normalized clip data to screen pixels
-        # Position is relative to center (0.5, 0.5)
-        
         center_x = v_rect.left() + v_rect.width() * 0.5
         center_y = v_rect.top() + v_rect.height() * 0.5
-        
-        # Position offset (px * width)
-        # Note: In our model, 0,0 is center. +0.5 is right edge.
-        # So we simply add px * v_rect.width()
-        
         draw_x = center_x + (px * v_rect.width())
-        draw_y = center_y - (py * v_rect.height()) # Inverted Y for video standard
-        
-        # Size
+        draw_y = center_y - (py * v_rect.height())
         draw_w = v_rect.width() * sx
         draw_h = v_rect.height() * sy
-        
-        # Center the rect
         final_x = draw_x - (draw_w / 2)
         final_y = draw_y - (draw_h / 2)
-
         self.transform_rect = QRectF(final_x, final_y, draw_w, draw_h)
-        
         p.setPen(QPen(QColor(0, 150, 255), 2))
         p.setBrush(Qt.NoBrush)
         p.drawRect(self.transform_rect)
-        
         self.update_handles()
         p.setBrush(QColor(0, 150, 255))
         for handle in self.handles:
             p.drawRect(handle)
 
     def draw_crop_controls(self, p, v_rect):
-        # Draw current crop rectangle
         c = self.selected_clip
         x = v_rect.left() + (c.crop_x1 * v_rect.width())
         y = v_rect.top() + (c.crop_y1 * v_rect.height())
         w = (c.crop_x2 - c.crop_x1) * v_rect.width()
         h = (c.crop_y2 - c.crop_y1) * v_rect.height()
-        
         r = QRectF(x, y, w, h)
-        
         pen = QPen(Qt.yellow, 2, Qt.CustomDashLine)
         pen.setDashPattern([5, 5])
         pen.setDashOffset(self.dash_offset)
@@ -150,76 +148,90 @@ class SafeOverlay(QWidget):
         self.handles.append(QRectF(r.left() - hs/2, r.bottom() - hs/2, hs, hs))
 
     def mousePressEvent(self, event):
-        if not self.selected_clip: return
-        self.drag_start_pos = event.pos()
-        
-        if self.crop_mode:
-            self.dragging = True
-            # Simple start for crop logic
-            return
-
-        for i, handle in enumerate(self.handles):
-            if handle.contains(event.pos()):
+        try:
+            if not self.selected_clip: return
+            self.drag_start_pos = event.pos()
+            if self.crop_mode:
                 self.dragging = True
-                self.drag_handle = i
-                self.drag_start_rect = QRectF(self.transform_rect)
-                self.drag_start_clip_scale = (self.selected_clip.scale_x, self.selected_clip.scale_y)
-                self.drag_start_clip_pos = (self.selected_clip.pos_x, self.selected_clip.pos_y)
+                self.drag_handle = "crop_draw"
+                self.interaction_started.emit()
                 return
-        
-        if self.transform_rect.contains(event.pos()):
-            self.dragging = True
-            self.drag_handle = "move"
-            self.drag_start_clip_pos = (self.selected_clip.pos_x, self.selected_clip.pos_y)
+            for i, handle in enumerate(self.handles):
+                if handle.contains(event.pos()):
+                    self.dragging = True
+                    self.drag_handle = i
+                    self.drag_start_rect = QRectF(self.transform_rect)
+                    self.drag_start_clip_scale = (self.selected_clip.scale_x, self.selected_clip.scale_y)
+                    self.drag_start_clip_pos = (self.selected_clip.pos_x, self.selected_clip.pos_y)
+                    self.interaction_started.emit()
+                    return
+            if self.transform_rect.contains(event.pos()):
+                self.dragging = True
+                self.drag_handle = "move"
+                self.drag_start_clip_pos = (self.selected_clip.pos_x, self.selected_clip.pos_y)
+                self.interaction_started.emit()
+        except Exception as e:
+            self.dragging = False
+            self.drag_handle = None
+            print(f"Error in mousePressEvent: {e}")
 
     def mouseMoveEvent(self, event):
-        if not self.dragging: return
-        v_rect = self.get_video_rect()
-        if v_rect.width() == 0 or v_rect.height() == 0: return
-
-        if self.crop_mode:
-            # Simplified crop drag logic for the prompt
-            norm_x, norm_y = self.to_video_coords(event.pos())
-            # Logic to update crop_x2/y2 would go here
+        try:
+            if not self.dragging: return
+            v_rect = self.get_video_rect()
+            if v_rect.width() == 0 or v_rect.height() == 0: return
+            if self.crop_mode and self.drag_handle == "crop_draw":
+                start_x, start_y = self.to_video_coords(self.drag_start_pos)
+                curr_x, curr_y = self.to_video_coords(event.pos())
+                start_x = max(0.0, min(1.0, start_x))
+                start_y = max(0.0, min(1.0, start_y))
+                curr_x = max(0.0, min(1.0, curr_x))
+                curr_y = max(0.0, min(1.0, curr_y))
+                x1 = min(start_x, curr_x)
+                y1 = min(start_y, curr_y)
+                x2 = max(start_x, curr_x)
+                y2 = max(start_y, curr_y)
+                if (x2 - x1) > 0.05 and (y2 - y1) > 0.05:
+                    self.param_changed.emit("crop_x1", x1)
+                    self.param_changed.emit("crop_y1", y1)
+                    self.param_changed.emit("crop_x2", x2)
+                    self.param_changed.emit("crop_y2", y2)
+                self.update()
+                return
+            delta = event.pos() - self.drag_start_pos
+            dx_norm = delta.x() / v_rect.width()
+            dy_norm = delta.y() / v_rect.height()
+            if self.drag_handle == "move":
+                new_px = self.drag_start_clip_pos[0] + dx_norm
+                new_py = self.drag_start_clip_pos[1] - dy_norm
+                self.param_changed.emit("pos_x", new_px)
+                self.param_changed.emit("pos_y", new_py)
+            elif isinstance(self.drag_handle, int):
+                scale_delta = dx_norm
+                if self.drag_handle in [0, 3]: scale_delta = -scale_delta
+                new_sx = max(0.1, self.drag_start_clip_scale[0] + scale_delta)
+                new_sy = max(0.1, self.drag_start_clip_scale[1] + scale_delta)
+                self.param_changed.emit("scale_x", new_sx)
+                self.param_changed.emit("scale_y", new_sy)
             self.update()
-            return
-
-        delta = event.pos() - self.drag_start_pos
-        
-        # Calculate Delta in Normalized Video Space
-        dx_norm = delta.x() / v_rect.width()
-        dy_norm = delta.y() / v_rect.height()
-
-        if self.drag_handle == "move":
-            new_px = self.drag_start_clip_pos[0] + dx_norm
-            new_py = self.drag_start_clip_pos[1] - dy_norm # Y is inverted
-            self.param_changed.emit("pos_x", new_px)
-            self.param_changed.emit("pos_y", new_py)
-            
-        elif isinstance(self.drag_handle, int):
-            # Scale logic
-            # Simplified: just uniform scale based on X delta for now
-            # To do perfectly requires anchor points, but this stops the drift
-            scale_delta = dx_norm
-            if self.drag_handle in [0, 3]: scale_delta = -scale_delta
-            
-            new_sx = max(0.1, self.drag_start_clip_scale[0] + scale_delta)
-            new_sy = max(0.1, self.drag_start_clip_scale[1] + scale_delta)
-            
-            self.param_changed.emit("scale_x", new_sx)
-            self.param_changed.emit("scale_y", new_sy)
-
-        self.update()
+        except Exception as e:
+            self.dragging = False
+            self.drag_handle = None
+            print(f"Error in mouseMoveEvent: {e}")
 
     def mouseReleaseEvent(self, event):
+        if self.dragging:
+             self.interaction_ended.emit()
         self.dragging = False
         self.drag_handle = None
-
+    
     def mouseDoubleClickEvent(self, event):
         self.parent().parent().parent().toggle_popout()
 
 class PreviewWidget(QWidget):
     param_changed = pyqtSignal(str, float)
+    interaction_started = pyqtSignal()
+    interaction_ended = pyqtSignal()
     play_requested = pyqtSignal()
     seek_requested = pyqtSignal(float)
 
@@ -236,6 +248,8 @@ class PreviewWidget(QWidget):
         l.addWidget(self.player)
         self.overlay = SafeOverlay(self.player)
         self.overlay.param_changed.connect(self.param_changed)
+        self.overlay.interaction_started.connect(self.interaction_started)
+        self.overlay.interaction_ended.connect(self.interaction_ended)
         self.popout_button = QPushButton("Pop Out", self.overlay)
         self.popout_button.clicked.connect(self.toggle_popout)
         layout.addWidget(self.container)
@@ -286,6 +300,4 @@ class PreviewWidget(QWidget):
         super().resizeEvent(event)
 
     def set_mode(self, width, height, mode_name):
-        self.overlay.target_res = (width, height)
-        self.overlay.mode = "Portrait" if "Portrait" in mode_name else "Landscape"
-        self.overlay.update()
+        self.overlay.set_mode(width, height, mode_name)

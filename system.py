@@ -25,10 +25,6 @@ def setup_system(base_dir):
     f_handler = RotatingFileHandler(f_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
     f_handler.setFormatter(fmt)
     logger.addHandler(f_handler)
-    c_handler = logging.StreamHandler()
-    c_handler.setLevel(logging.INFO)
-    c_handler.setFormatter(fmt)
-    logger.addHandler(c_handler)
     return logger
 
 class ConfigManager:
