@@ -1,0 +1,91 @@
+import os
+import sys
+import shutil
+import logging
+from PyQt5.QtWidgets import QMessageBox, QInputDialog, QApplication, QAction
+from PyQt5.QtCore import QTimer, Qt, QByteArray
+
+class ProjectController:
+    def __init__(self, main_window):
+        self.mw = main_window
+        self.pm = main_window.pm
+        self.logger = logging.getLogger("Advanced_Video_Editor")
+        self.autosave_timer = QTimer(main_window)
+        self.autosave_timer.timeout.connect(self.run_autosave)
+        self.autosave_timer.start(10000)
+
+    def load_initial(self):
+        latest = self.pm.get_latest_project_dir()
+        if latest:
+            self.switch_project(latest)
+        else:
+            self.pm.create_project()
+            self.mw.history.push(self.mw.timeline.get_state())
+
+    def switch_project(self, path):
+        self.mw.save_state_for_undo()
+        data = self.pm.load_project_from_dir(path)
+        if data:
+            self.mw.timeline.load_state(data.get('timeline', []))
+            self.mw.history.current_state_map = {c['uid']: c for c in self.mw.timeline.get_state()}
+            self.restore_ui_state(data.get('ui_state', {}))
+            self.mw.media_pool.clear()
+            for item in self.mw.timeline.get_state():
+                path = item.get('path')
+                if path:
+                    self.mw.media_pool.add_file(path)
+                self.mw.asset_loader.regenerate_assets(item)
+            self.mw.setWindowTitle(f"Advanced Video Editor - {self.pm.project_name}")
+
+    def run_autosave(self):
+        if not self.mw.is_dirty: return
+        ui = {
+            "playhead": self.mw.timeline.playhead_pos,
+            "zoom": self.mw.timeline.scale_factor,
+            "scroll_x": self.mw.timeline.horizontalScrollBar().value(),
+            "scroll_y": self.mw.timeline.verticalScrollBar().value()
+        }
+        self.pm.save_state(self.mw.timeline.get_state(), ui, is_autosave=True)
+
+    def restore_ui_state(self, ui):
+        if not ui: return
+        self.mw.timeline.set_time(ui.get('playhead', 0.0))
+        self.mw.timeline.scale_factor = ui.get('zoom', 50)
+        self.mw.timeline.fit_to_view()
+
+    def reset_project(self):
+        if QMessageBox.question(self.mw, 'Reset', "Start new project? Unsaved changes lost.", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+            self.mw.timeline.load_state([])
+            self.mw.media_pool.clear()
+            self.pm.create_project()
+            self.mw.history.push([])
+
+    def delete_all_projects(self):
+        if QMessageBox.warning(self.mw, "DELETE ALL", "PERMANENTLY DELETE ALL PROJECTS?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+            for f in ["cache", "projects", "__pycache__"]:
+                shutil.rmtree(os.path.join(self.mw.base_dir, f), ignore_errors=True)
+            os.execl(sys.executable, sys.executable, *sys.argv)
+
+    def populate_menu(self, menu):
+        menu.clear()
+        menu.addAction(f"Rename: {self.pm.project_name}", self.rename_project)
+        menu.addAction("Save As...", self.save_as)
+        menu.addSeparator()
+        for p in self.pm.get_all_projects():
+            txt = f"{p['name']} [{p['last_saved'].split('.')[0]}]"
+            a = QAction(txt, self.mw)
+            if p['id'] == self.pm.project_id: a.setEnabled(False)
+            else: a.triggered.connect(lambda _, d=p['dir']: self.switch_project(d))
+            menu.addAction(a)
+
+    def rename_project(self):
+        name, ok = QInputDialog.getText(self.mw, "Rename", "New Name:", text=self.pm.project_name)
+        if ok and name:
+            self.pm.set_project_name(name)
+            self.mw.setWindowTitle(f"Advanced Video Editor - {name}")
+
+    def save_as(self):
+        name, ok = QInputDialog.getText(self.mw, "Save As", "Name:", text=f"{self.pm.project_name} - Copy")
+        if ok and name:
+            new_dir = self.pm.save_project_as(name, self.mw.timeline.get_state())
+            if new_dir: self.switch_project(new_dir)

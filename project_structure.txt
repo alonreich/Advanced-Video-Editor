@@ -1,0 +1,150 @@
+## PROJECT GOAL: SMART GPU-ACCELERATED VIDEO EDITING APPLICATION
+## TARGET: PYTHON / DESKTOP (GPU-ENABLED)
+
+1. PURPOSE
+The application delivers an advanced desktop video editing environment that enforces deterministic timeline behavior and leverages pure hardware GPU acceleration for all non-destructive editing workflows.
+
+2. PRIMARY GOALS & SUCCESS CRITERIA
+The system provides real-time editing performance via hardware-specific encoders while preventing invalid timeline states by design. Success is defined by zero timeline corruption and a keyboard-first workflow that minimizes user friction.
+
+3. TARGET USERS
+Designed for technical content creators and power editors who require high-performance rendering, absolute predictability in clip placement, and a streamlined, professional-grade interface.
+
+4. TIMELINE & LANE MANAGEMENT
+The interface initializes with six lanes, automatically creating lane N only when lane N-1 is occupied. The UI utilizes a vertical scrollbar for expansion, and clips are strictly forbidden from overlapping within the same lane.
+
+5. MAGNETIC SNAPPING & RIPPLE EDITING
+Magnetic snapping is absolute and always active, forcing dragged clips to the nearest adjacent clip edge upon mouse release. Ripple editing ensures that insert, delete, and move operations automatically propagate forward to maintain timeline continuity.
+
+6. HARDWARE GPU ACCELERATION
+The engine auto-detects hardware-specific encoders (h264_nvenc, h264_qsv, or h264_amf) to offload all rendering and effects processing from the CPU. This ensures smooth, real-time playback even with complex filter graphs.
+
+7. AUDIO & VOICEOVER INTEGRATION
+Video and audio remain linked by default but can be separated into independent entities via a context menu. Voiceover recording is triggered by the "C" key, inserting audio directly at the playhead and storing files in a dedicated project "voiceover" sub-folder.
+
+8. ADVANCED NAVIGATION & SHORTCUTS
+A keyboard-first workflow is implemented: Ctrl+K for track splitting, "[" for trimming from the start, and "]" for trimming to the end. Navigation utilizes frame-by-frame arrow keys and Ctrl+Arrow for aggressive seeking.
+
+9. DATA SAFETY & CRASH RECOVERY
+The system maintains a list-based effect stack and utilizes continuous background auto-saving to project files. A global exception hook manages crash recovery by attempting to restore the last valid state from an emergency sidecar log.
+
+10. VISUAL INSPECTOR & PROJECT SETTINGS
+A dedicated Clip Inspector manages all clip metadata, including speed, volume, and GPU-evaluated effect stacks. The application supports seamless switching between Landscape and Portrait modes, with out-of-bounds media rendered at 50% transparency.
+
+11. FIFO PROJECT MANAGEMENT
+The system enforces a strict 10-project limit, automatically nuking the oldest directory to prevent drive saturation with stale data.
+
+12. SMART HISTORY COMPRESSION
+The UndoStack utilizes delta-based "Smart Push" logic to store only modified states, preventing memory bloat during long editing sessions.
+
+13. UIPI ELEVATION WORKAROUND
+Implements specific user32.dll message filters to ensure drag-and-drop functionality remains operational even when the process is running with elevated privileges.
+
+14. HARDWARE-ACCELERATED THUMBNAILING
+The ThumbnailWorker auto-detects and hijacks CUDA or QSV hardware to offload preview generation from the CPU.
+
+15. OCCLUSION-AWARE RENDERING
+The FilterGraphGenerator calculates clip layering to skip rendering visual data occluded by higher tracks, optimizing processing throughput.
+
+16. INTERACTIVE VISUAL TRANSFORMS
+A SafeOverlay provides direct on-preview handles for real-time manipulation of clip scale, position, and crop parameters.
+
+17. AUTOMATIC DLL PATCHING
+On initialization, the BinaryManager automatically clones libmpv-2.dll to mpv-1.dll to resolve Windows-specific compatibility issues without user intervention.
+
+18. VERTICAL VIEW SYNCHRONIZATION
+The TimelineContainer enforces strict vertical alignment between track headers and the timeline viewport to maintain navigational integrity.
+
+19. EMERGENCY SIDECAR LOGGING
+Critical failures trigger an immediate state dump to a project.sidecar.json, allowing for deterministic recovery of the last valid timeline state.
+
+20. DYNAMIC ENCODER SELECTION
+The render engine probes FFmpeg capabilities at runtime to force-enable h264_nvenc, h264_qsv, or h264_amf based on available GPU hardware.
+
+# This file maps each Python file in the project to its roles and duties.
+
+advanced_video_editor.py:
+- Main entry point; initializes logging, exception hooks, and the Qt environment.
+- Implements UIPI workarounds to enable drag-and-drop for elevated processes.
+
+asset_loader.py:
+- Manages the media import pipeline; offloads probing and thumbnail generation to background threads.
+- Creates ClipModel instances and adds them to the timeline state.
+
+binary_manager.py:
+- Static utility for managing external binary paths (FFmpeg, ffprobe, libmpv).
+- Handles Windows-specific DLL patching for mpv-1.dll compatibility.
+
+clip_item.py:
+- Visual representation of a clip; handles user input for selection, trimming, moving, and fades.
+- Implements collision logic to prevent illegal overlapping states within a lane.
+
+clip_manager.py:
+- Contains core logic for clip operations: splitting (Razor), deleting, and parameter updates.
+- Interfaces with the UndoStack to ensure snapshots are taken before modifications.
+
+clip_painter.py:
+- Static class providing raw QPainter commands for drawing clips (waveforms, thumbnails, fades).
+
+export_dialog.py:
+- UI for the rendering process; configures export parameters and monitors progress.
+
+ffmpeg_generator.py:
+- Core engine translating timeline states into complex FFmpeg filter graphs.
+- Handles visual occlusion and audio mixing for playback and export.
+
+history.py:
+- Implements UndoStack with smart delta compression (Smart Push) to minimize memory usage.
+
+inspector.py:
+- Property panel for modifying clip-specific metadata (Speed, Volume, Crop).
+- Controls global project settings like Output Resolution.
+
+main_window.py:
+- Central hub instantiating all docks and controllers; routes signals between components.
+
+media_pool.py:
+- Drag-and-drop enabled list widget for organizing imported source assets.
+
+model.py:
+- Defines the ClipModel dataclass; stores pure data separate from the UI layer.
+
+playback_manager.py:
+- Manages playhead sync and the loop between MPVPlayer and the Timeline.
+- Triggers filter graph rebuilds for real-time preview when the timeline is "dirty".
+
+player.py:
+- Wraps libmpv in a Qt widget; provides hardware-accelerated seeking and live filtering.
+
+preview.py:
+- Container for the video player and SafeOverlay for interactive visual transforms.
+
+prober.py:
+- Runs ffprobe for metadata extraction and FFmpeg for audio waveform generation.
+
+project.py:
+- Low-level file system manager; handles JSON saving/loading and FIFO project cleanup.
+
+project_controller.py:
+- High-level logic for project workflows (New, Open, Save As, and Autosave).
+
+render_worker.py:
+- Background thread executing final GPU-accelerated export commands.
+
+system.py:
+- Configures logging and provides a thread-safe configuration manager for app preferences.
+
+timeline_container.py:
+- Structural wrapper keeping TrackHeaders and TimelineView vertically synchronized.
+
+timeline_scene.py:
+- Graphics scene responsible for drawing the background grid and track separators.
+
+timeline_view.py:
+- Interactive view handling playhead movement, zooming, and tool modes.
+
+track_header.py:
+- UI for track controls; implements drag-and-drop logic for reordering lanes.
+
+worker.py:
+- ThumbnailWorker: Queued background thread generating thumbnails with CUDA/QSV acceleration.
