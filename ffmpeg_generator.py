@@ -9,7 +9,7 @@ class FilterGraphGenerator:
         self.mutes = mutes or {}
         self.logger = logging.getLogger("Advanced_Video_Editor")
 
-    def build(self, start_time=0.0, duration=None, is_export=False):
+    def build(self, start_time=0.0, duration=None, is_export=False, for_vlc=False):
         inputs = []
         file_map = {}
         filter_parts = []
@@ -20,7 +20,7 @@ class FilterGraphGenerator:
         for clip in sorted_by_layer:
             is_occluded = False
             for higher in visible_video:
-                if higher['track'] <= clip['track']: 
+                if higher['track'] <= clip['track']:
                     continue
                 higher_end = higher['start'] + higher['dur']
                 clip_end = clip['start'] + clip['dur']
@@ -127,16 +127,25 @@ class FilterGraphGenerator:
             audio_outs.append(f"[{lbl}]")
         if audio_outs:
             filter_parts.append(f"{''.join(audio_outs)}amix=inputs={len(audio_outs)}:dropout_transition=0[out_a]")
-        else:
-            filter_parts.append("anullsrc=channel_layout=stereo:sample_rate=44100[out_a]")
-        if last_v == "[base]":
-            filter_parts.append(f"[base]null[vo]")
-        else:
-            filter_parts.append(f"{last_v}null[vo]")
-        if audio_outs:
-            filter_parts.append(f"{''.join(audio_outs)}amix=inputs={len(audio_outs)}:dropout_transition=0[out_a]")
-            filter_parts.append("[out_a]anull[ao]")
+            filter_parts.append("[out_a]aresample=44100[ao]")
         else:
             filter_parts.append("anullsrc=channel_layout=stereo:sample_rate=44100[ao]")
         full_filter = ";".join(filter_parts)
+        if for_vlc:
+            vlc_chain = self._generate_vlc_filter_string(video_clips)
+            return inputs, vlc_chain, "[vo]", "[ao]", main_input_used_for_video
         return inputs, full_filter, "[vo]", "[ao]", main_input_used_for_video
+
+    def _generate_vlc_filter_string(self, clips):
+        """Converts clip metadata into VLC video filter module syntax."""
+        if not clips: return ""
+        c = clips[0]
+        vlc_ops = []
+        if any(c.get(f'crop_{x}') is not None for x in ['x1', 'y1', 'x2', 'y2']):
+            top = int(c.get('crop_y1', 0) * 1080)
+            left = int(c.get('crop_x1', 0) * 1920)
+            bottom = int((1 - c.get('crop_y2', 1)) * 1080)
+            right = int((1 - c.get('crop_x2', 1)) * 1920)
+            vlc_ops.append(f"croppadd{{croptop={top},cropbottom={bottom},cropleft={left},cropright={right}}}")
+        vol = c.get('volume', 100) / 100.0
+        return ":".join(vlc_ops)

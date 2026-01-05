@@ -47,6 +47,10 @@ class SafeOverlay(QWidget):
         self.dash_timer = QTimer(self)
         self.dash_timer.timeout.connect(self.update_dash_offset)
         self.dash_timer.start(100)
+        self.is_snapped_x = False
+        self.is_snapped_y = False
+        import logging
+        self.logger = logging.getLogger(__name__)
 
     def set_mode(self, width, height, mode_name):
         self.target_res = (width, height)
@@ -66,15 +70,12 @@ class SafeOverlay(QWidget):
         self.update()
 
     def get_video_rect(self):
+        """Calculates the exact letterboxed area where VLC renders the video."""
         w, h = self.width(), self.height()
         target_w, target_h = self.target_res
-        if target_w == 0 or target_h == 0: return self.rect()
-        if self.mode == "Portrait":
-            scale = min(h / target_h, w / target_w)
-            nw, nh = target_w * scale, target_h * scale
-        else:
-            scale = min(w / target_w, h / target_h)
-            nw, nh = target_w * scale, target_h * scale
+        if target_w == 0 or target_h == 0: return QRectF(self.rect())
+        scale = min(w / target_w, h / target_h)
+        nw, nh = target_w * scale, target_h * scale
         nx, ny = (w - nw) / 2, (h - nh) / 2
         return QRectF(nx, ny, nw, nh)
 
@@ -99,6 +100,12 @@ class SafeOverlay(QWidget):
                 p.setPen(QPen(Qt.white, 1))
                 p.drawText(40, 32, "REC")
         if not self.selected_clip: return
+        if self.dragging and self.crop_mode:
+            p.setPen(QPen(QColor(255, 255, 255, 180), 1, Qt.DashLine))
+            if self.is_snapped_x:
+                p.drawLine(int(v_rect.center().x()), int(v_rect.top()), int(v_rect.center().x()), int(v_rect.bottom()))
+            if self.is_snapped_y:
+                p.drawLine(int(v_rect.left()), int(v_rect.center().y()), int(v_rect.right()), int(v_rect.center().y()))
         p.setClipRect(v_rect)
         if self.crop_mode:
             self.draw_crop_controls(p, v_rect)
@@ -114,7 +121,7 @@ class SafeOverlay(QWidget):
         path.addRect(QRectF(widget_rect))
         path.addRect(v_rect)
         p.setClipPath(path)
-        p.fillRect(widget_rect, QColor(0, 0, 0, 128)) 
+        p.fillRect(widget_rect, QColor(0, 0, 0, 128))
         p.restore()
         p.setPen(QPen(QColor(255, 255, 255, 150), 2, Qt.DashLine))
         p.drawRect(v_rect)
@@ -206,102 +213,74 @@ class SafeOverlay(QWidget):
     def mouseMoveEvent(self, event):
         """Goal 16: Real-time coordinate transformation for visual transforms."""
         try:
-            if not self.dragging or not self.selected_clip: 
+            if not self.dragging or not self.selected_clip:
                 return
             v_rect = self.get_video_rect()
-            if v_rect.width() == 0 or v_rect.height() == 0: 
+            if v_rect.width() == 0 or v_rect.height() == 0:
                 return
             delta = event.pos() - self.drag_start_pos
             dx_norm = delta.x() / v_rect.width()
             dy_norm = delta.y() / v_rect.height()
-            if self.drag_handle == "move":
-                new_px = self.drag_start_clip_pos[0] + dx_norm
-                new_py = self.drag_start_clip_pos[1] - dy_norm
-                self.param_changed.emit("pos_x", new_px)
-                self.param_changed.emit("pos_y", new_py)
-            elif isinstance(self.drag_handle, int):
-                scale_delta = dx_norm * 2.0 
-                if self.drag_handle in [0, 3]:
-                    scale_delta = -scale_delta
-                new_sx = max(0.1, self.drag_start_clip_scale[0] + scale_delta)
-                new_sy = max(0.1, self.drag_start_clip_scale[1] + scale_delta)
-                self.param_changed.emit("scale_x", new_sx)
-                self.param_changed.emit("scale_y", new_sy)
-            self.update()
-        except Exception as e:
-            self.dragging = False
-            self.drag_handle = None
-            self.logger.error(f"[OVERLAY] Move Error: {e}")
             if self.crop_mode:
                 if self.drag_handle == "crop_draw":
                     start_x, start_y = self.to_video_coords(self.drag_start_pos)
                     curr_x, curr_y = self.to_video_coords(event.pos())
-                    start_x = max(0.0, min(1.0, start_x))
-                    start_y = max(0.0, min(1.0, start_y))
-                    curr_x = max(0.0, min(1.0, curr_x))
-                    curr_y = max(0.0, min(1.0, curr_y))
-                    x1 = min(start_x, curr_x)
-                    y1 = min(start_y, curr_y)
-                    x2 = max(start_x, curr_x)
-                    y2 = max(start_y, curr_y)
+                    x1, y1 = max(0.0, min(1.0, min(start_x, curr_x))), max(0.0, min(1.0, min(start_y, curr_y)))
+                    x2, y2 = max(0.0, min(1.0, max(start_x, curr_x))), max(0.0, min(1.0, max(start_y, curr_y)))
                     if (x2 - x1) > 0.05 and (y2 - y1) > 0.05:
                         self.param_changed.emit("crop_x1", x1)
                         self.param_changed.emit("crop_y1", y1)
                         self.param_changed.emit("crop_x2", x2)
                         self.param_changed.emit("crop_y2", y2)
-                    self.update()
-                    return
                 elif isinstance(self.drag_handle, int):
-                    delta = event.pos() - self.drag_start_pos
-                    new_rect = QRectF(self.drag_start_rect)
-                    aspect_ratio = self.target_res[0] / self.target_res[1]
-                    if self.drag_handle == 0:
-                        new_rect.setTopLeft(new_rect.topLeft() + delta)
-                        new_rect.setWidth(new_rect.height() * aspect_ratio)
-                    elif self.drag_handle == 1:
-                        new_rect.setTopRight(new_rect.topRight() + delta)
-                        new_rect.setWidth(new_rect.height() * aspect_ratio)
-                    elif self.drag_handle == 2:
-                        new_rect.setBottomRight(new_rect.bottomRight() + delta)
-                        new_rect.setWidth(new_rect.height() * aspect_ratio)
-                    elif self.drag_handle == 3:
-                        new_rect.setBottomLeft(new_rect.bottomLeft() + delta)
-                        new_rect.setWidth(new_rect.height() * aspect_ratio)
+                    aspect = self.target_res[0] / self.target_res[1]
+                    min_h = 20
+                    if self.drag_handle in [0, 1]:
+                        avail_h = self.drag_start_rect.bottom() - v_rect.top()
+                        avail_w = (v_rect.right() - self.drag_start_rect.left()) if self.drag_handle == 1 else (self.drag_start_rect.right() - v_rect.left())
+                    else:
+                        avail_h = v_rect.bottom() - self.drag_start_rect.top()
+                        avail_w = (v_rect.right() - self.drag_start_rect.left()) if self.drag_handle == 2 else (self.drag_start_rect.right() - v_rect.left())
+                    max_h = min(avail_h, avail_w / aspect)
+                    raw_h = (self.drag_start_rect.height() - dy_norm * v_rect.height()) if self.drag_handle in [0, 1] else (self.drag_start_rect.height() + dy_norm * v_rect.height())
+                    new_h = max(min_h, min(raw_h, max_h))
+                    new_w = new_h * aspect
+                    if self.drag_handle == 0: new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.bottom() - new_h, new_w, new_h)
+                    elif self.drag_handle == 1: new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.bottom() - new_h, new_w, new_h)
+                    elif self.drag_handle == 2: new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.top(), new_w, new_h)
+                    elif self.drag_handle == 3: new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.top(), new_w, new_h)
                     x1, y1 = self.to_video_coords(new_rect.topLeft())
                     x2, y2 = self.to_video_coords(new_rect.bottomRight())
-                    self.param_changed.emit("crop_x1", x1)
-                    self.param_changed.emit("crop_y1", y1)
-                    self.param_changed.emit("crop_x2", x2)
-                    self.param_changed.emit("crop_y2", y2)
-                    self.update()
-                    return
-            delta = event.pos() - self.drag_start_pos
-            dx_norm = delta.x() / v_rect.width()
-            dy_norm = delta.y() / v_rect.height()
-            if self.drag_handle == "move":
-                new_px = self.drag_start_clip_pos[0] + dx_norm
-                new_py = self.drag_start_clip_pos[1] - dy_norm
-                self.param_changed.emit("pos_x", new_px)
-                self.param_changed.emit("pos_y", new_py)
-            elif isinstance(self.drag_handle, int):
-                scale_delta = dx_norm
-                if self.drag_handle in [0, 3]: scale_delta = -scale_delta
-                new_sx = max(0.1, self.drag_start_clip_scale[0] + scale_delta)
-                new_sy = max(0.1, self.drag_start_clip_scale[1] + scale_delta)
-                self.param_changed.emit("scale_x", new_sx)
-                self.param_changed.emit("scale_y", new_sy)
+                    threshold = 0.02
+                    self.is_snapped_x = abs(((x1 + x2) / 2) - 0.5) < threshold
+                    self.is_snapped_y = abs(((y1 + y2) / 2) - 0.5) < threshold
+                    if self.is_snapped_x:
+                        diff = 0.5 - ((x1 + x2) / 2)
+                        x1 += diff; x2 += diff
+                    if self.is_snapped_y:
+                        diff = 0.5 - ((y1 + y2) / 2)
+                        y1 += diff; y2 += diff
+                    self.param_changed.emit("crop_x1", max(0.0, x1)); self.param_changed.emit("crop_y1", max(0.0, y1))
+                    self.param_changed.emit("crop_x2", min(1.0, x2)); self.param_changed.emit("crop_y2", min(1.0, y2))
+            else:
+                if self.drag_handle == "move":
+                    self.param_changed.emit("pos_x", self.drag_start_clip_pos[0] + dx_norm)
+                    self.param_changed.emit("pos_y", self.drag_start_clip_pos[1] - dy_norm)
+                elif isinstance(self.drag_handle, int):
+                    scale_delta = dx_norm * 2.0 if self.drag_handle not in [0, 3] else -dx_norm * 2.0
+                    new_s = max(0.1, self.drag_start_clip_scale[0] + scale_delta)
+                    self.param_changed.emit("scale_x", new_s); self.param_changed.emit("scale_y", new_s)
             self.update()
         except Exception as e:
             self.dragging = False
-            self.drag_handle = None
-            print(f"Error in mouseMoveEvent: {e}")
+            self.logger.error(f"[OVERLAY] Move Error: {e}")
 
     def mouseReleaseEvent(self, event):
         if self.dragging:
             self.interaction_ended.emit()
         self.dragging = False
         self.drag_handle = None
-    
+
     def mouseDoubleClickEvent(self, event):
         self.parent().parent().parent().toggle_popout()
 
@@ -334,10 +313,12 @@ class PreviewWidget(QWidget):
         layout.addWidget(self.container)
 
     def set_player(self, player):
+        """Connects the player node and stacks the overlay on top."""
         self.player = player
         self.container.layout().addWidget(player)
         self.overlay.setParent(player)
-        self.overlay.resize(player.size())
+        self.overlay.stackUnder(None)
+        self.overlay.setGeometry(player.rect())
         self.overlay.show()
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setContentsMargins(5, 5, 5, 5)

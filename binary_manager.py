@@ -20,6 +20,65 @@ class BinaryManager:
                 logger.error(f"[BINARY] Failed to patch DLL: {e}")
         os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         os.environ["MPV_HOME"] = bin_dir
+        local_vlc = os.path.join(bin_dir, "libvlc.dll")
+        if os.path.exists(local_vlc):
+            if BinaryManager._is_64bit(local_vlc):
+                os.environ["PYTHON_VLC_MODULE_PATH"] = bin_dir
+                logger.info(f"[BINARY] Confirmed 64-bit VLC in local binaries.")
+                BinaryManager.purge_vlc_cache(bin_dir, logger)
+            else:
+                logger.critical("[BINARY] Local libvlc.dll is NOT 64-bit. VLC will fail to load.")
+        else:
+            logger.warning("[BINARY] Local libvlc.dll not found in binaries folder.")
+        BinaryManager.verify_vlc_plugins(bin_dir, logger)
+    @staticmethod
+    def purge_vlc_cache(bin_dir, logger):
+        """Nukes stale plugin-registry to prevent 'ghost' DLL errors."""
+        plugins_dat = os.path.join(bin_dir, "plugins", "plugins.dat")
+        if os.path.exists(plugins_dat):
+            try:
+                os.remove(plugins_dat)
+                logger.info("[BINARY] Stale VLC plugin cache purged.")
+            except Exception as e:
+                logger.error(f"[BINARY] Failed to purge VLC cache: {e}")
+    @staticmethod
+    def verify_vlc_plugins(bin_dir, logger):
+        """Goal 17: Ensures all 200+ VLC plugins are present and readable to prevent 'silent' playback failure."""
+        plugins_dir = os.path.join(bin_dir, "plugins")
+        if not os.path.exists(plugins_dir):
+            logger.critical(f"[BINARY] VLC Plugins folder MISSING at {plugins_dir}")
+            return False
+        plugin_count = 0
+        failed_reads = []
+        for root, dirs, files in os.walk(plugins_dir):
+            for file in files:
+                if file.endswith(".dll"):
+                    plugin_count += 1
+                    fpath = os.path.join(root, file)
+                    try:
+                        with open(fpath, 'rb') as f:
+                            f.read(1024)
+                    except Exception as e:
+                        failed_reads.append(f"{file} ({e})")
+        if failed_reads:
+            logger.error(f"[BINARY] {len(failed_reads)} VLC plugins are CORRUPT or UNREADABLE.")
+            for err in failed_reads[:5]:
+                logger.error(f"  -> {err}")
+        else:
+            logger.info(f"[BINARY] Integrity Check: {plugin_count} VLC plugins verified.")
+        return len(failed_reads) == 0
+    @staticmethod
+    def _is_64bit(filepath):
+        """Dumps the PE header to ensure we aren't loading 32-bit garbage into a 64-bit process."""
+        try:
+            with open(filepath, 'rb') as f:
+                f.seek(60)
+                pe_offset = int.from_bytes(f.read(4), 'little')
+                f.seek(pe_offset + 4)
+                machine = int.from_bytes(f.read(2), 'little')
+                return machine == 0x8664
+        except Exception:
+            return False
     @staticmethod
     def get_executable(name):
         if os.name == 'nt' and not name.lower().endswith('.exe'): name += ".exe"

@@ -38,71 +38,41 @@ class PlaybackManager(QObject):
             self.timer.stop()
             self.state_changed.emit(False)
             return
-        if not self.is_dirty and self.player.mpv:
+        if not self.is_dirty and self.player.is_playing():
             self.logger.info("[PLAYBACK] Clean Resume.")
             self.player.play()
             self.timer.start()
             self.state_changed.emit(True)
             return
         self._rebuild_and_play(proxy_enabled, track_vols, track_mutes)
-            
+
     def _rebuild_and_play(self, proxy_enabled, track_vols, track_mutes):
+        """VLC-Only: Loads the top-most clip at the playhead and applies VLC filters."""
         state = self.timeline.get_state()
-        if not state:
-            self.logger.warning("[PLAYBACK] Empty State.")
+        if not state: return
+        current_time = self.timeline.playhead_pos
+        active_clips = [c for c in state if c['start'] <= current_time <= (c['start'] + c['dur'])]
+        active_clips.sort(key=lambda x: x['track'], reverse=True)
+        if not active_clips:
+            self.player.stop()
             return
-        max_end = 0.0
-        for c in state:
-            try:
-                end_t = float(c.get("start", 0.0)) + float(c.get("duration", 0.0))
-                if end_t > max_end:
-                    max_end = end_t
-            except Exception:
-                continue
-        current_time = float(getattr(self.timeline, "playhead_pos", 0.0))
-        if max_end > 0.0 and (current_time < 0.0 or current_time > max_end):
-            self.logger.info(
-                f"[PLAYHEAD] Out of range ({current_time:.3f}s > {max_end:.3f}s). Snapping to 0.0s"
-            )
-            current_time = 0.0
-            try:
-                self.timeline.playhead_pos = 0.0
-            except Exception:
-                pass
-            try:
-                self.playhead_updated.emit(0.0)
-            except Exception:
-                pass
-        res_txt = self.inspector.combo_res.currentText()
-        w, h = (1080, 1920) if "Portrait" in res_txt else (1920, 1080)
-        if "2560" in res_txt:
-            w, h = 2560, 1440
-        elif "3840" in res_txt:
-            w, h = 3840, 2160
-        if proxy_enabled:
-            w //= 2
-            h //= 2
-        preroll = 2.0
-        start_win = max(0.0, current_time - preroll)
-        if max_end > 0.0 and start_win >= max_end:
-            start_win = max(0.0, max_end - 0.001)
-        preview_dur = 60.0
-        start_win = round(start_win, 4) 
-        self.logger.info(
-            f"[PLAYBACK] Rebuilding Graph at {current_time:.4f}s (Window: {start_win}s)..."
-        )
-        gen = FilterGraphGenerator(state, w, h, track_vols, track_mutes)
+        target = active_clips[0]
+        gen = FilterGraphGenerator([target])
+        inputs, vlc_filters, v_pad, a_pad, is_vid = gen.build(for_vlc=True)
         try:
-            inputs, f_str, _, _, main_input_used_for_video = gen.build(start_time=start_win, duration=preview_dur)
-            self.player.play_filter_graph(f_str, inputs, main_input_used_for_video)
-            seek_target = max(0.0, current_time - start_win)
-            self.player.seek(round(seek_target, 4))
+            self.player.load(target['path'])
+            if vlc_filters:
+                self.player.player.video_set_logo_string(vlc.VideoLogoOption.enable, 1)
+            self.player.set_speed(target.get('speed', 1.0))
+            self.player.set_volume(target.get('volume', 100.0))
+            self.player.play()
+            internal_seek = (current_time - target['start']) + target.get('source_in', 0)
+            self.player.seek(max(0.0, internal_seek))
             self.is_dirty = False
             self.timer.start()
+            self.state_changed.emit(True)
         except Exception as e:
-            self.logger.error("[PLAYBACK] Failed to rebuild graph", exc_info=True)
-            self.timer.stop()
-            self.state_changed.emit(False)
+            self.logger.error(f"[VLC-PLAYBACK] Failed: {e}")
 
     def _sync_playhead(self):
         if not self.player.is_playing(): return

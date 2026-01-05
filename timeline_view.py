@@ -181,7 +181,8 @@ class TimelineView(QGraphicsView):
                             other.model.start += diff
                             other.setX(other.model.start * self.scale_factor)
                 self.ops.move_clip(item.uid, (new_start, new_track))
-            self.check_auto_expand()
+            if new_track >= self.num_tracks - 1:
+                self.check_auto_expand()
             self.compact_lanes()
             self.interaction_ended.emit()
         if self.is_dragging_playhead:

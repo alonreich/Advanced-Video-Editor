@@ -11,7 +11,7 @@ from asset_loader import AssetLoader
 from binary_manager import BinaryManager
 from system import ConfigManager
 from project import ProjectManager
-from player_vlc import VLCPlayer
+from player import MPVPlayer
 from timeline_container import TimelineContainer
 from preview import PreviewWidget
 from inspector import InspectorWidget
@@ -39,6 +39,8 @@ class MainWindow(QMainWindow):
         self.undo_lock = False
         self.track_volumes = {}
         self.track_mutes = {}
+        from player_vlc import VLCPlayer 
+        self.player_node = VLCPlayer()
         self.setup_ui()
         self.initial_layout_state = self.saveState()
         self.initial_geometry = self.saveGeometry()
@@ -54,7 +56,6 @@ class MainWindow(QMainWindow):
             pass
 
     def finalize_setup(self):
-        self.player_node = VLCPlayer()
         self.preview.set_player(self.player_node)
         self.playback = PlaybackManager(self.player_node, self.timeline, self.inspector)
         self.playback.playhead_updated.connect(self.timeline.set_time)
@@ -84,7 +85,8 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self):
         self.setAcceptDrops(True)
-        self.setWindowTitle("Advanced Video Editor")
+        vlc_status = "VLC-READY" if os.environ.get("PYTHON_VLC_MODULE_PATH") else "VLC-MISSING"
+        self.setWindowTitle(f"Advanced Video Editor [{vlc_status}]")
         self.setWindowIcon(QIcon(os.path.join(self.base_dir, "icon", "Gemini_Generated_Image_prevzwprevzwprev.png")))
         self.resize(1825, 945)
         screen = QDesktopWidget().screenGeometry()

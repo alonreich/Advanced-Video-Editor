@@ -8,7 +8,7 @@ class ClipManager:
         self.undo_lock = False
 
     def undo_lock_acquire(self):
-        self.undo_lock = True
+         self.undo_lock = True
 
     def undo_lock_release(self):
         self.undo_lock = False
@@ -134,3 +134,4 @@ class ClipManager:
             target_item.update()
             if self.mw.player_node.is_playing() and "crop" in param:
                 self.mw.player_node.apply_crop(item.model)
+#test

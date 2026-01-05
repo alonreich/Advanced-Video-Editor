@@ -138,15 +138,9 @@ class MPVPlayer(QWidget):
                 self.mpv.command("loadfile", main_input, "replace", "novideo")
             if extras:
                 extra_str = ",".join(extras)
-                try:
-                    self.mpv["external-files"] = extra_str
-                except Exception:
-                    self.mpv.command("set", "external-files", extra_str)
+                self.mpv.command("set", "external-files", extra_str)
             else:
-                try:
-                    self.mpv["external-files"] = ""
-                except:
-                    pass
+                self.mpv.command("set", "external-files", "")
             self.mpv.pause = False
             self._playing = True
         except Exception as e:
