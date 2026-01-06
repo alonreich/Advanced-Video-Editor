@@ -108,6 +108,8 @@ class AssetLoader(QObject):
             'linked_uid': a_uid
         }
         self.mw.timeline.add_clip(video_data)
+        self.mw.timeline.update_tracks()
+        self.mw.timeline.fit_to_view()
         self.regenerate_assets(video_data)
 
     def regenerate_assets(self, data):

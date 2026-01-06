@@ -33,7 +33,7 @@ class ThumbnailWorker(QThread):
         self.checked_hwaccel = True
         try:
             from binary_manager import BinaryManager
-            gpu_codec = BinaryManager.get_best_encoder(self.logger)
+            gpu_codec = BinaryManager.get_best_encoder()
             if gpu_codec in ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc']:
                 self.hwaccel_args = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']
                 self.scale_filter = 'scale_cuda'
@@ -136,11 +136,11 @@ class ProxyWorker(QThread):
     def get_encoding_settings(self):
         """Determines best encoder for fast, low-quality proxy generation."""
         if self.checked_hwaccel:
-            return self.hwaccel_args, self.codec
+            return self.hwaccel_args, self.scale_filter
         self.checked_hwaccel = True
         try:
             from binary_manager import BinaryManager
-            gpu_codec = BinaryManager.get_best_encoder(self.logger)
+            gpu_codec = BinaryManager.get_best_encoder()
             if gpu_codec in ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc']:
                 self.logger.info("[PROXY-GPU] 40-Series Detected. Using HEVC_NVENC for high-speed proxies.")
                 self.hwaccel_args = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']

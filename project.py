@@ -88,7 +88,7 @@ class ProjectManager:
             self.logger.error(f"Failed to import asset {abs_path}: {e}")
             return abs_path
 
-    def save_state(self, timeline_state, ui_state=None, is_autosave=False, is_emergency=False):
+    def save_state(self, timeline_state, ui_state=None, assets=None, is_autosave=False, is_emergency=False):
         """Goal 19: Emergency Sidecar Logging and Continuous Autosave."""
         if not self.current_project_dir:
             self.logger.warning("[SAVE] No active project directory to save state.")
@@ -105,7 +105,8 @@ class ProjectManager:
             "name": self.project_name,
             "last_saved": str(datetime.datetime.now()),
             "timeline": timeline_state,
-            "ui_state": ui_state or {}
+            "ui_state": ui_state or {},
+            "assets": assets or []
         }
         temp_path = fpath + ".tmp"
         try:

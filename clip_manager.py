@@ -50,6 +50,7 @@ class ClipManager:
                     new_partner_item.model.linked_uid = new_item.model.uid
         if hasattr(self.mw, 'asset_loader'):
             self.mw.asset_loader.regenerate_assets(new_data)
+        self.mw.timeline.fit_to_view()
         return new_item
 
     def delete_current(self):
@@ -72,8 +73,10 @@ class ClipManager:
                         partner.model.start = i.model.start
                         partner.setX(partner.model.start * partner.scale)
         self.mw.timeline.remove_selected_clips()
+        self.mw.timeline.update_tracks()
         self.mw.inspector.set_clip(None)
         self.mw.timeline.data_changed.emit()
+        self.mw.timeline.fit_to_view()
 
     def on_param_changed(self, param, value):
         item = self.mw.timeline.get_selected_item()
@@ -83,16 +86,15 @@ class ClipManager:
             self.mw.save_state_for_undo()
         if param == "speed":
             item.set_speed(value)
-            if self.mw.player_node.is_playing():
-                self.mw.playback.live_param_update("speed", value)
-            else:
+            self.mw.playback.live_param_update("speed", value)
+            if not self.mw.player_node.is_playing():
                 self.mw.playback.mark_dirty(serious=True)
         elif param == "volume":
             item.set_volume(value)
-            if self.mw.player_node.is_playing(): 
-                self.mw.player_node.set_volume(value)
+            self.mw.player_node.set_volume(value)
         elif param in ["crop_x1", "crop_y1", "crop_x2", "crop_y2", "pos_x", "pos_y", "scale_x", "scale_y"]:
             setattr(item.model, param, value)
+            self.mw.inspector.update_clip_param(param, value)
             self.mw.preview.overlay.update()
         elif param == "resync_partner":
             self.mw.save_state_for_undo()

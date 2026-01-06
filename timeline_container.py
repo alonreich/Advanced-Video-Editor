@@ -33,6 +33,31 @@ class TimelineContainer(QWidget):
         self.track_headers.add_track()
         self.timeline_view.add_track_to_scene()
 
+    def remove_track(self):
+        self.track_headers.remove_track()
+        self.timeline_view.remove_track_from_scene()
+
+    def update_tracks(self):
+        """Maintains the expanding track rule based on occupied lanes."""
+        clips = self.timeline_view.get_state()
+        if not clips:
+            highest_track = -1
+        else:
+            highest_track = max(c.get('track', 0) for c in clips)
+        if highest_track <= 0:
+            desired_tracks = 2
+        elif highest_track <= 2:
+            desired_tracks = 4
+        else:
+            desired_tracks = 6
+        current_tracks = self.timeline_view.num_tracks
+        while current_tracks < desired_tracks:
+            self.add_track()
+            current_tracks += 1
+        while current_tracks > desired_tracks:
+            self.remove_track()
+            current_tracks -= 1
+
     def set_visual_time(self, sec):
         """Passes the visual update to the view without emitting signals."""
         self.timeline_view.set_visual_time(sec)
@@ -42,19 +67,8 @@ class TimelineContainer(QWidget):
         self.timeline_view.scene.clear()
         self.timeline_view.set_num_tracks(0) 
         try:
-            max_track = 0
-            if state:
-                for c in state:
-                    try:
-                        t = int(c.get('track', 0))
-                    except (ValueError, TypeError):
-                        t = 0
-                    if t > max_track:
-                        max_track = t
-            desired_tracks = max(3, max_track + 1)
-            for i in range(desired_tracks):
-                self.add_track()
             self.timeline_view.load_state(state or [])
+            self.update_tracks()
         except Exception as e:
             self.logger.error(f"Timeline Load Error: {e}")
 

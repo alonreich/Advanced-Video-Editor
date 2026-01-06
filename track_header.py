@@ -39,7 +39,7 @@ class TrackHeaderWidget(QWidget):
 class TrackHeaders(QWidget):
     tracks_reordered = pyqtSignal(int, int)
     track_volume_changed = pyqtSignal(int, float)
-    def __init__(self, num_tracks=3, parent=None):
+    def __init__(self, num_tracks=2, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.main_layout = QVBoxLayout(self)
@@ -69,6 +69,14 @@ class TrackHeaders(QWidget):
     def add_track(self):
         new_idx = len(self.headers)
         self.add_track_header(new_idx)
+
+    def remove_track(self):
+        if not self.headers:
+            return
+        header_to_remove = self.headers.pop()
+        self.main_layout.removeWidget(header_to_remove)
+        header_to_remove.deleteLater()
+        self.update_track_indices()
 
     def update_track_indices(self):
         for i, widget in enumerate(self.headers):

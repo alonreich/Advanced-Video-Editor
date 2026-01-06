@@ -29,11 +29,16 @@ class ProjectController:
         data = self.pm.load_project_from_dir(path)
         if data:
             timeline_data = data.get('timeline', [])
+            asset_data = data.get('assets', [])
             self.mw.media_pool.clear()
             self.mw.timeline.load_state(timeline_data)
             self.mw.history.current_state_map = {c['uid']: copy.deepcopy(c) for c in timeline_data}
             self.restore_ui_state(data.get('ui_state', {}))
             seen_assets = set()
+            for path in asset_data:
+                if path and os.path.exists(path):
+                    self.mw.media_pool.add_file(path)
+                    seen_assets.add(path)
             for item in timeline_data:
                 file_path = item.get('path')
                 if file_path and file_path not in seen_assets:
@@ -45,6 +50,11 @@ class ProjectController:
 
     def run_autosave(self):
         if not self.mw.is_dirty: return
+        pool_assets = []
+        for i in range(self.mw.media_pool.count()):
+            item = self.mw.media_pool.item(i)
+            path = item.data(Qt.UserRole)
+            if path: pool_assets.append(path)
         ui = {
             "playhead": self.mw.timeline.playhead_pos,
             "zoom": self.mw.timeline.scale_factor,
@@ -52,7 +62,7 @@ class ProjectController:
             "scroll_y": self.mw.timeline.verticalScrollBar().value(),
             "resolution": self.mw.inspector.combo_res.currentText()
         }
-        self.pm.save_state(self.mw.timeline.get_state(), ui, is_autosave=True)
+        self.pm.save_state(self.mw.timeline.get_state(), ui, assets=pool_assets, is_autosave=True)
 
     def restore_ui_state(self, ui):
         if not ui: return
@@ -87,8 +97,10 @@ class ProjectController:
         for p in self.pm.get_all_projects():
             txt = f"{p['name']} [{p['last_saved'].split('.')[0]}]"
             a = QAction(txt, self.mw)
-            if p['id'] == self.pm.project_id: a.setEnabled(False)
-            else: a.triggered.connect(lambda _, d=p['dir']: self.switch_project(d))
+            if p['id'] == self.pm.project_id:
+                a.setEnabled(False)
+            else:
+                a.triggered.connect(lambda _, d=p['dir']: self.switch_project(d))
             menu.addAction(a)
 
     def rename_project(self):
@@ -102,3 +114,26 @@ class ProjectController:
         if ok and name:
             new_dir = self.pm.save_project_as(name, self.mw.timeline.get_state())
             if new_dir: self.switch_project(new_dir)
+
+    def setup_project_menu(self):
+        pass
+
+    def populate_project_list(self, menu):
+        menu.clear()
+        projects = self.pm.get_all_projects()
+        projects.sort(key=lambda x: x['last_saved'], reverse=True)
+        if not projects:
+            dummy = QAction("No projects found", self.mw)
+            dummy.setEnabled(False)
+            menu.addAction(dummy)
+            return
+        for p in projects:
+            date_str = p['last_saved'].split('.')[0]
+            display_str = f"{p['name']}   [{date_str}]"
+            action = QAction(display_str, self.mw)
+            if p['id'] == self.pm.project_id:
+                action.setCheckable(True)
+                action.setChecked(True)
+                action.setEnabled(False)
+            action.triggered.connect(lambda checked, path=p['dir']: self.switch_project(path))
+            menu.addAction(action)

@@ -30,7 +30,7 @@ class TimelineView(QGraphicsView):
         self.track_headers = track_headers
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.mode = Mode.POINTER
-        self.num_tracks = 6
+        self.num_tracks = 2
         self.track_height = 40
         self.scale_factor = 50
         self.playhead_pos = 0.0
@@ -106,6 +106,7 @@ class TimelineView(QGraphicsView):
                             partner.model.start = item.model.start
                 self.update_clip_positions()
                 self.data_changed.emit()
+                self.fit_to_view()
             event.accept()
         elif event.key() == Qt.Key_BracketRight:
             item = self.get_selected_item()
@@ -119,6 +120,7 @@ class TimelineView(QGraphicsView):
                             partner.model.duration = item.model.duration
                 self.update_clip_positions()
                 self.data_changed.emit()
+                self.fit_to_view()
             event.accept()
         else:
             super().keyPressEvent(event)
@@ -173,6 +175,7 @@ class TimelineView(QGraphicsView):
     def mouseReleaseEvent(self, event):
         if self.is_dragging_clip:
             self.is_dragging_clip = False
+            self.compact_lanes()
             self.interaction_ended.emit()
         if self.is_dragging_playhead:
             self.is_dragging_playhead = False
@@ -248,18 +251,28 @@ class TimelineView(QGraphicsView):
                 item.setRect(0, 0, item.model.duration * self.scale_factor, 30)
 
     def user_set_playhead(self, x):
-        self.set_time(max(0, x / self.scale_factor))
-
-    def set_time(self, sec):
+        sec = max(0, x / self.scale_factor)
         self.playhead_pos = sec
-        self.time_updated.emit(sec)
         self.viewport().update()
         px = sec * self.scale_factor
         val = self.horizontalScrollBar().value()
-        if px > val + self.viewport().width() - 50:
-            self.horizontalScrollBar().setValue(int(px - 100))
+        viewport_w = self.viewport().width()
+        if px > val + viewport_w - 50:
+            self.horizontalScrollBar().setValue(int(px - viewport_w + 100))
         elif px < val:
             self.horizontalScrollBar().setValue(int(px - 100))
+        self.time_updated.emit(sec)
+
+    def set_time(self, sec):
+        if self.is_dragging_playhead:
+            return
+        self.playhead_pos = sec
+        self.viewport().update()
+        px = sec * self.scale_factor
+        val = self.horizontalScrollBar().value()
+        viewport_w = self.viewport().width()
+        if px > val + viewport_w - 50:
+             self.horizontalScrollBar().setValue(int(px - 50))
 
     def set_visual_time(self, sec):
         """Updates playhead without emitting time_updated to prevent player seek loops."""
@@ -294,12 +307,23 @@ class TimelineView(QGraphicsView):
     def add_track_to_scene(self):
         self.set_num_tracks(self.num_tracks + 1)
 
+    def remove_track_from_scene(self):
+        if self.num_tracks > 0:
+            self.set_num_tracks(self.num_tracks - 1)
+
     def set_num_tracks(self, num):
         self.num_tracks = num
         self.scene.setSceneRect(0, 0, self.scene.sceneRect().width(), self.num_tracks * self.track_height)
 
     def get_state(self):
         return [i.model.to_dict() for i in self.scene.items() if isinstance(i, ClipItem)]
+
+    def get_content_end(self):
+        """Calculates the end time of the last clip on the timeline."""
+        items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
+        if not items:
+            return 0.0
+        return max(i.model.start + i.model.duration for i in items)
 
     def load_state(self, state):
         self.logger.info(f"Loading timeline state with {len(state)} clips.")
@@ -337,11 +361,3 @@ class TimelineView(QGraphicsView):
         else:
             self.clip_selected.emit(None)
             self.track_headers.set_selected(-1)
-
-    def check_auto_expand(self):
-        """Goal 4: Automatically create lane N only when lane N-1 is occupied."""
-        items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
-        if not items: return
-        max_occupied_track = max(i.track for i in items)
-        if max_occupied_track >= self.num_tracks - 2:
-            self.mw.timeline.add_track()

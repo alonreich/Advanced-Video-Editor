@@ -6,6 +6,7 @@ class InspectorWidget(QWidget):
     param_changed = pyqtSignal(str, float)
     resolution_changed = pyqtSignal(str)
     track_mute_toggled = pyqtSignal(int, bool)
+    crop_toggled = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -13,7 +14,7 @@ class InspectorWidget(QWidget):
         self.setStyleSheet("""
             QWidget { background-color: #2E2E2E; color: #E0E0E0; font-family: 'Segoe UI'; }
             QGroupBox { border: 1px solid #444; border-radius: 4px; margin-top: 20px; font-weight: bold; }
-            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 5px; left: 10px; color: #AAA; }
+            QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 5px; color: #AAA; }
             QAbstractSpinBox { background: #1E1E1E; border: 1px solid #444; border-radius: 2px; padding: 4px; color: white; }
             QCheckBox { spacing: 5px; }
             QCheckBox::indicator { width: 13px; height: 13px; background: #1E1E1E; border: 1px solid #555; }
@@ -118,9 +119,30 @@ class InspectorWidget(QWidget):
         return gb
 
     def create_crop_group(self):
-        gb = QGroupBox("Crop")
-        gb.setStyleSheet("QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 0 5px; }")
-        l = QGridLayout(gb)
+        gb = QGroupBox()
+        gb.setStyleSheet("QGroupBox { margin-top: 10px; border: 1px solid #444; padding-top: 5px; }")
+        l = QVBoxLayout(gb)
+        self.btn_crop_toggle = QPushButton("Crop")
+        self.btn_crop_toggle.setCheckable(True)
+        self.btn_crop_toggle.setCursor(Qt.PointingHandCursor)
+        self.btn_crop_toggle.setFixedHeight(28)
+        self.btn_crop_toggle.clicked.connect(self.crop_toggled.emit)
+        self.btn_crop_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: #444; color: #DDD; font-weight: bold; font-size: 12px;
+                border: 2px solid #222; border-radius: 4px;
+                border-bottom: 3px solid #111;
+            }
+            QPushButton:checked {
+                background-color: #D84315; color: white;
+                border-bottom: 1px solid #8f2a0b;
+                margin-top: 2px;
+            }
+            QPushButton:hover { background-color: #555; }
+            QPushButton:checked:hover { background-color: #E64A19; }
+        """)
+        l.addWidget(self.btn_crop_toggle)
+        grid = QGridLayout()
         self.spin_crop_x1 = self.make_crop_spin()
         self.spin_crop_y1 = self.make_crop_spin()
         self.spin_crop_x2 = self.make_crop_spin()
@@ -129,18 +151,20 @@ class InspectorWidget(QWidget):
         self.spin_crop_y1.valueChanged.connect(lambda v: self.param_changed.emit("crop_y1", v/100))
         self.spin_crop_x2.valueChanged.connect(lambda v: self.param_changed.emit("crop_x2", v/100))
         self.spin_crop_y2.valueChanged.connect(lambda v: self.param_changed.emit("crop_y2", v/100))
-        l.addWidget(QLabel("X1:"), 0, 0)
-        l.addWidget(self.spin_crop_x1, 0, 1)
-        l.addWidget(QLabel("Y1:"), 0, 2)
-        l.addWidget(self.spin_crop_y1, 0, 3)
-        l.addWidget(QLabel("X2:"), 1, 0)
-        l.addWidget(self.spin_crop_x2, 1, 1)
-        l.addWidget(QLabel("Y2:"), 1, 2)
-        l.addWidget(self.spin_crop_y2, 1, 3)
+        grid.addWidget(QLabel("X1:"), 0, 0)
+        grid.addWidget(self.spin_crop_x1, 0, 1)
+        grid.addWidget(QLabel("Y1:"), 0, 2)
+        grid.addWidget(self.spin_crop_y1, 0, 3)
+        grid.addWidget(QLabel("X2:"), 1, 0)
+        grid.addWidget(self.spin_crop_x2, 1, 1)
+        grid.addWidget(QLabel("Y2:"), 1, 2)
+        grid.addWidget(self.spin_crop_y2, 1, 3)
         btn_reset = QToolButton()
         btn_reset.setText("Reset Crop")
+        btn_reset.setStyleSheet("background: #333; color: white; border: 1px solid #555; border-radius: 3px;")
         btn_reset.clicked.connect(self.reset_crop)
-        l.addWidget(btn_reset, 2, 0, 1, 4)
+        grid.addWidget(btn_reset, 2, 0, 1, 4, Qt.AlignCenter)
+        l.addLayout(grid)
         self.layout.addWidget(gb)
 
     def make_crop_spin(self):
@@ -157,6 +181,22 @@ class InspectorWidget(QWidget):
         self.spin_crop_y1.setValue(0)
         self.spin_crop_x2.setValue(100)
         self.spin_crop_y2.setValue(100)
+
+    def update_clip_param(self, param, value):
+        """Updates a single parameter on the UI without a full refresh."""
+        if not self.current_clip:
+            return
+        self.blockSignals(True)
+        if param == "crop_x1":
+            self.spin_crop_x1.setValue(value * 100)
+        elif param == "crop_y1":
+            self.spin_crop_y1.setValue(value * 100)
+        elif param == "crop_x2":
+            self.spin_crop_x2.setValue(value * 100)
+        elif param == "crop_y2":
+            self.spin_crop_y2.setValue(value * 100)
+        self.blockSignals(False)
+
     def set_clip(self, clip_model, track_muted=False):
         self.blockSignals(True)
         self.current_clip = clip_model
@@ -191,8 +231,3 @@ class InspectorWidget(QWidget):
         if not self.current_clip or not self.current_clip.linked_uid:
             return
         self.param_changed.emit("resync_partner", 1.0)
-    def set_clip(self, clip_model, track_muted=False):
-        if clip_model and clip_model.linked_uid:
-            self.btn_resync.show()
-        else:
-            self.btn_resync.hide()

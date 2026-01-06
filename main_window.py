@@ -4,7 +4,7 @@ import json
 import time
 from PyQt5.QtWidgets import (QMainWindow, QDockWidget, QAction, QToolButton, QMenu, 
                              QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, 
-                             QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem)
+                             QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem, QStyle)
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QByteArray
 from project_controller import ProjectController
@@ -16,7 +16,7 @@ from project import ProjectManager
 from playback_manager import PlaybackManager
 from history import UndoStack
 from recorder import VoiceoverRecorder
-from player_vlc import VLCPlayer
+from player import MPVPlayer
 from timeline_container import TimelineContainer
 from preview import PreviewWidget
 from inspector import InspectorWidget
@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         self.undo_lock = False
         self.track_volumes = {}
         self.track_mutes = {}
-        self.player_node = VLCPlayer()
+        self.player_node = MPVPlayer()
         self.recorder = VoiceoverRecorder()
         self.recorder.recording_started.connect(self.on_recording_started)
         self.recorder.recording_finished.connect(self.on_recording_finished)
@@ -74,13 +74,15 @@ class MainWindow(QMainWindow):
         self.preview.play_requested.connect(self.toggle_play)
         self.preview.interaction_started.connect(self.clip_ctrl.undo_lock_acquire)
         self.preview.interaction_ended.connect(self.clip_ctrl.undo_lock_release)
+        self.timeline.interaction_ended.connect(self.timeline.fit_to_view)
         self.inspector.track_mute_toggled.connect(lambda t, m: (self.track_mutes.update({t:m}), self.mark_dirty()))
         self.inspector.param_changed.connect(self.clip_ctrl.on_param_changed)
         self.inspector.resolution_changed.connect(self.on_resolution_switched)
+        self.inspector.crop_toggled.connect(self.toggle_crop_mode)
         self.media_pool.media_double_clicked.connect(self.on_media_pool_double_click)
+        self.proj_ctrl.setup_project_menu()
 
     def on_resolution_switched(self, res_text):
-        """Goal 10: Handle Landscape/Portrait toggle across the UI."""
         w, h = (1080, 1920) if "Portrait" in res_text else (1920, 1080)
         if "2560" in res_text: w, h = 2560, 1440
         elif "3840" in res_text: w, h = 3840, 2160
@@ -92,26 +94,19 @@ class MainWindow(QMainWindow):
 
     def setup_ui(self):
         self.setAcceptDrops(True)
-        vlc_status = "VLC-READY" if os.environ.get("PYTHON_VLC_MODULE_PATH") else "VLC-MISSING"
-        self.setWindowTitle(f"Advanced Video Editor [{vlc_status}]")
+        self.setWindowTitle("Advanced Video Editor")
         self.setWindowIcon(QIcon(os.path.join(self.base_dir, "icon", "Gemini_Generated_Image_prevzwprevzwprev.png")))
-        self.resize(1825, 945)
+        self.resize(1700, 945)
         screen = QDesktopWidget().screenGeometry()
         x = (screen.width() - self.width()) // 2
         y = (screen.height() - self.height()) // 2
         self.move(x, y)
         self.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AnimatedDocks)
         self.setStyleSheet("""
-            QMainWindow::separator {
-                background-color: #CCCCCC;
-                width: 7px;
-                height: 7px;
-            }
-            QMainWindow::separator:hover {
-                background-color: #4A90E2;
-            }
+            QMainWindow::separator { background-color: #CCCCCC; width: 7px; height: 7px; }
+            QMainWindow::separator:hover { background-color: #4A90E2; }
         """)
-        self.preview = PreviewWidget(None)
+        self.preview = PreviewWidget(self.player_node)
         self.setCentralWidget(self.preview)
         self.dock_timeline = QDockWidget("Timeline", self)
         self.dock_timeline.setObjectName("TimelineDock")
@@ -119,46 +114,33 @@ class MainWindow(QMainWindow):
         self.dock_timeline.setWidget(self.timeline)
         self.dock_timeline.setMinimumHeight(150)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_timeline)
-        timeline_title_bar = CustomTitleBar("Timeline")
-        self.dock_timeline.setTitleBarWidget(timeline_title_bar)
-        self.dock_timeline.resizeEvent = lambda event: timeline_title_bar.update_title(f"Timeline ({event.size().width()}x{event.size().height()})")
         self.dock_insp = QDockWidget("Inspector", self)
         self.dock_insp.setObjectName("InspectorDock")
         self.inspector = InspectorWidget()
         self.dock_insp.setWidget(self.inspector)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_insp)
-        inspector_title_bar = CustomTitleBar("Inspector")
-        self.dock_insp.setTitleBarWidget(inspector_title_bar)
-        self.dock_insp.resizeEvent = lambda event: inspector_title_bar.update_title(f"Inspector ({event.size().width()}x{event.size().height()})")
         self.dock_pool = QDockWidget("Media Pool", self)
         self.dock_pool.setObjectName("MediaPoolDock")
         self.media_pool = MediaPoolWidget()
         self.dock_pool.setWidget(self.media_pool)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_pool)
-        media_pool_title_bar = CustomTitleBar("Media Pool")
-        self.dock_pool.setTitleBarWidget(media_pool_title_bar)
-        self.dock_pool.resizeEvent = lambda event: media_pool_title_bar.update_title(f"Media Pool ({event.size().width()}x{event.size().height()})")
-        self.dock_pool.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.dock_insp.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.dock_timeline.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         self.dock_pool.widget().setMinimumWidth(100)
         self.dock_insp.widget().setMinimumWidth(250)
         self.resizeDocks([self.dock_pool, self.dock_insp], [228, 250], Qt.Horizontal)
         self.resizeDocks([self.dock_timeline], [180], Qt.Vertical)
         self.setup_toolbar()
-        if g := self.config.get("geometry"): 
-            self.restoreGeometry(QByteArray.fromHex(g.encode()))
-        if s := self.config.get("state"): 
-            self.restoreState(QByteArray.fromHex(s.encode()))
-        self.resizeEvent = lambda event: self.setWindowTitle(f"Advanced Video Editor ({event.size().width()}x{event.size().height()})")
+        if g := self.config.get("geometry"): self.restoreGeometry(QByteArray.fromHex(g.encode()))
+        if s := self.config.get("state"): self.restoreState(QByteArray.fromHex(s.encode()))
 
     def setup_toolbar(self):
         tb = self.addToolBar("Main")
         tb.setObjectName("MainToolbar")
-        tb.addAction("Import", self.import_media)
-        tb.addAction("Add Music", self.import_music)
+        tb.setStyleSheet("QToolButton, QPushButton { font-size: 13px; padding: 5px; }")
+        import_action = QAction("📂  Import Media", self)
+        import_action.triggered.connect(self.import_media)
+        tb.addAction(import_action)
         tb.addSeparator()
-        tb.addAction("Export", self.open_export)
+        tb.addAction("Export Video", self.open_export)
         tb.addSeparator()
         tb.addAction("Undo", self.undo_action)
         tb.addAction("Split", lambda: self.clip_ctrl.split_current())
@@ -168,62 +150,49 @@ class MainWindow(QMainWindow):
         self.act_snap.setChecked(True)
         self.act_snap.toggled.connect(lambda e: setattr(self.timeline.timeline_view, 'snapping_enabled', e))
         self.act_ripple = tb.addAction("🌊")
-        self.act_ripple.setToolTip("Ripple Edit (Auto-Close Gaps)")
         self.act_ripple.setCheckable(True)
         self.act_ripple.setChecked(True)
-        self.act_crop = tb.addAction("Crop")
-        self.act_crop.setCheckable(True)
-        self.act_crop.toggled.connect(self.toggle_crop_mode)
         self.act_proxy = tb.addAction("Proxy")
         self.act_proxy.setCheckable(True)
         self.act_proxy.setChecked(True)
+        self.btn_projects = QToolButton()
+        self.btn_projects.setText(" Projects ")
+        self.btn_projects.setPopupMode(QToolButton.InstantPopup)
+        self.btn_projects.setAutoRaise(True)
+        self.projects_menu = QMenu(self.btn_projects)
+        self.projects_menu.aboutToShow.connect(lambda: self.proj_ctrl.populate_project_list(self.projects_menu))
+        self.btn_projects.setMenu(self.projects_menu)
+        self.btn_projects.setStyleSheet("QToolButton { font-size: 13px; font-weight: normal; color: #E0E0E0; padding: 5px; }")
+        tb.addWidget(self.btn_projects)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
-        btn_p = QToolButton()
-        btn_p.setText("Project List")
-        btn_p.setPopupMode(QToolButton.InstantPopup)
-        self.p_menu = QMenu(self)
-        btn_p.setMenu(self.p_menu)
-        self.p_menu.aboutToShow.connect(lambda: self.proj_ctrl.populate_menu(self.p_menu))
-        tb.addWidget(btn_p)
-        tb.addWidget(QLabel("  "))
-        btn_style = """
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #B71C1C, stop:1 #7F0000);
-                color: white; border: 1px solid #500; border-radius: 4px; padding: 5px; min-width: 80px; font-weight: bold;
-                border-style: outset;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #D32F2F, stop:1 #8E0000); }
-            QPushButton:pressed { border-style: inset; background: #500; }
-        """
-        btn_reset = QPushButton("Reset Project")
-        btn_reset.setStyleSheet(btn_style)
-        btn_reset.clicked.connect(self.proj_ctrl.reset_project)
-        tb.addWidget(btn_reset)
-        tb.addWidget(QLabel(" "))
-        btn_layout = QPushButton("Reset Layout")
-        btn_layout.setStyleSheet(btn_style)
-        btn_layout.clicked.connect(self.reset_layout)
-        tb.addWidget(btn_layout)
-        tb.addWidget(QLabel(" "))
-        btn_del_all = QPushButton("Delete All Projects")
-        btn_del_all.setStyleSheet(btn_style)
-        btn_del_all.clicked.connect(self.proj_ctrl.delete_all_projects)
-        tb.addWidget(btn_del_all)
-        tb.addSeparator()
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        tb.addWidget(spacer)
+        btn_reset_layout = QPushButton("Reset Layout")
+        btn_reset_layout.clicked.connect(self.reset_layout)
+        btn_reset_layout.setStyleSheet("background-color: #D32F2F; color: white; font-weight: bold; border-radius: 3px; padding: 5px; margin-right: 5px;")
+        tb.addWidget(btn_reset_layout)
+        btn_reset_proj = QPushButton("Reset Project")
+        btn_reset_proj.clicked.connect(self.proj_ctrl.reset_project)
+        btn_reset_proj.setStyleSheet("background-color: #C62828; color: white; font-weight: bold; border-radius: 3px; padding: 5px; margin-right: 5px;")
+        tb.addWidget(btn_reset_proj)
+        btn_nuke = QPushButton("DELETE ALL")
+        btn_nuke.clicked.connect(self.proj_ctrl.delete_all_projects)
+        btn_nuke.setStyleSheet("background-color: #B71C1C; color: white; font-weight: bold; border-radius: 3px; padding: 5px;")
+        tb.addWidget(btn_nuke)
 
     def toggle_crop_mode(self, checked):
-        self.preview.overlay.toggle_crop_mode()
+        state = checked if isinstance(checked, bool) else not self.preview.overlay.crop_mode
+        if state != self.preview.overlay.crop_mode:
+            self.preview.overlay.toggle_crop_mode()
+        if hasattr(self.inspector, 'btn_crop_toggle'):
+            self.inspector.btn_crop_toggle.setChecked(self.preview.overlay.crop_mode)
 
     def keyPressEvent(self, event):
-        if event.isAutoRepeat():
-            super().keyPressEvent(event)
-            return
         if event.key() == Qt.Key_C:
+            self.toggle_crop_mode(not self.preview.overlay.crop_mode)
+            event.accept()
+            return
+        if event.key() == Qt.Key_V:
             if not self.recorder.is_recording:
                 path = self.pm.get_voiceover_target()
                 self.player_node.pause()
@@ -233,37 +202,25 @@ class MainWindow(QMainWindow):
                 self.recorder.stop_recording()
             event.accept()
             return
-        if event.modifiers() & Qt.ControlModifier:
-            if event.key() == Qt.Key_Z:
-                self.undo_action()
-            elif event.key() == Qt.Key_Y:
-                self.redo_action()
+        if self.preview.overlay.crop_mode and event.key() in [Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down]:
+            self.preview.overlay.handle_arrow_keys(event)
+            event.accept()
+            return
         super().keyPressEvent(event)
 
     def on_recording_started(self):
-        self.statusBar().showMessage("🔴 RECORDING VOICEOVER... (Press 'C' to Stop)")
-        self.timeline.setFocus()
+        self.statusBar().showMessage("🔴 RECORDING VOICEOVER...")
 
     def on_recording_finished(self, path):
         self.statusBar().showMessage(f"Voiceover saved: {os.path.basename(path)}", 5000)
-        item = QListWidgetItem(os.path.basename(path))
-        item.setData(Qt.UserRole, path)
-        self.media_pool.addItem(item)
-        if hasattr(self, 'asset_loader'):
-            self.asset_loader.handle_drop(path, -1, self.recording_start_time)
+        self.asset_loader.handle_drop(path, -1, self.recording_start_time)
 
     def reset_layout(self):
-        if QMessageBox.question(self, 'Reset Layout', "Reset UI layout to default?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            self.restoreState(self.initial_layout_state)
-            self.restoreGeometry(self.initial_geometry)
-            self.config.set("geometry", self.initial_geometry.toHex().data().decode())
-            self.config.set("state", self.initial_layout_state.toHex().data().decode())
+        self.restoreState(self.initial_layout_state)
+        self.restoreGeometry(self.initial_geometry)
 
     def import_media(self): 
         self.asset_loader.import_dialog()
-
-    def import_music(self): 
-        self.asset_loader.import_dialog(music_only=True)
 
     def open_export(self):
         dlg = ExportDialog(self.timeline.get_state(), self.track_volumes, self.track_mutes, self.inspector.combo_res.currentText(), self)
@@ -280,49 +237,24 @@ class MainWindow(QMainWindow):
         self.mark_dirty()
 
     def undo_action(self):
-        if s := self.history.undo(None): 
-            self.timeline.load_state(s)
+        if s := self.history.undo(self.timeline.get_state()): self.timeline.load_state(s)
 
     def redo_action(self):
-        if s := self.history.redo(None):
-            self.timeline.load_state(s)
-
-    def undo_lock_acquire(self):
-        """Captures initial state before interaction begins."""
-        self._pre_interaction_state = self.timeline.get_state()
-        self.undo_lock = True
-
-    def undo_lock_release(self):
-        """Commits the final delta after interaction ends."""
-        self.undo_lock = False
-        if hasattr(self, '_pre_interaction_state'):
-            self.history.push(self.timeline.get_state(), force=True)
-            self.mark_dirty()
-            del self._pre_interaction_state
+        if s := self.history.redo(self.timeline.get_state()): self.timeline.load_state(s)
 
     def on_selection(self, item):
         self.inspector.set_clip(item.model if item else None, self.track_mutes.get(item.track if item else 0, False))
         self.preview.overlay.set_selected_clip(item.model if item else None)
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        super().dropEvent(event)
-
     def closeEvent(self, e):
         self.asset_loader.cleanup()
-        self.logger.info(f"closeEvent triggered.")
-        timeline_state = self.timeline.get_state()
+        self.player_node.cleanup()
+        pool_assets = []
+        for i in range(self.media_pool.count()):
+            item = self.media_pool.item(i)
+            path = item.data(Qt.UserRole)
+            if path:
+                pool_assets.append(path)
         ui = {
             "playhead": self.timeline.playhead_pos,
             "zoom": self.timeline.scale_factor,
@@ -330,18 +262,7 @@ class MainWindow(QMainWindow):
             "scroll_y": self.timeline.verticalScrollBar().value(),
             "resolution": self.inspector.combo_res.currentText()
         }
-        self.proj_ctrl.pm.save_state(timeline_state, ui, is_autosave=False)
+        self.proj_ctrl.pm.save_state(self.timeline.get_state(), ui, assets=pool_assets)
         self.config.set("geometry", self.saveGeometry().toHex().data().decode())
         self.config.set("state", self.saveState().toHex().data().decode())
-        self.config.set("inspector_width", self.dock_insp.width())
-        self.config.set("media_pool_width", self.dock_pool.width())
         super().closeEvent(e)
-
-    def save_crash_backup(self):
-        """Goal 9: Attempt to restore last valid state via emergency sidecar log."""
-        self.logger.critical("CORE CRASH: Initializing Goal 9 Recovery...")
-        try:
-            current_state = self.timeline.get_state()
-            self.pm.save_state(current_state, is_emergency=True)
-        except Exception as e:
-            self.logger.critical(f"Goal 9 Recovery FAILED: {e}")

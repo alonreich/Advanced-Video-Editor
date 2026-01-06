@@ -3,30 +3,35 @@ from PyQt5.QtCore import Qt, QRectF
 
 class ClipPainter:
     @staticmethod
-    def draw_base_rect(painter, rect, is_selected, is_audio, is_out_of_sync=False):
+    def draw_base_rect(painter, rect, is_audio, is_out_of_sync=False):
+        """Draws the background fill only."""
         grad = QLinearGradient(0, 0, 0, rect.height())
         if is_out_of_sync:
             grad.setColorAt(0, QColor(180, 40, 40))
             grad.setColorAt(1, QColor(100, 20, 20))
-            border = QColor(255, 0, 0)
-            width = 2
-        elif is_selected:
-            grad.setColorAt(0, QColor(255, 204, 0))
-            grad.setColorAt(1, QColor(218, 165, 32))
-            border = QColor(255, 255, 255)
-            width = 2
         elif is_audio:
             grad.setColorAt(0, QColor(40, 80, 50))
             grad.setColorAt(1, QColor(20, 50, 30))
-            border = QColor(10, 10, 10)
-            width = 1
         else:
             grad.setColorAt(0, QColor(50, 50, 50))
             grad.setColorAt(1, QColor(30, 30, 30))
-            border = QColor(10, 10, 10)
-            width = 1
         painter.setBrush(QBrush(grad))
-        painter.setPen(QPen(border, width))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
+
+    @staticmethod
+    def draw_selection_border(painter, rect, is_selected, is_out_of_sync):
+        """Draws the border on top of everything else."""
+        border_color = QColor(10, 10, 10)
+        border_width = 1
+        if is_selected:
+            border_color = QColor(255, 215, 0)
+            border_width = 3
+        elif is_out_of_sync:
+            border_color = QColor(255, 0, 0)
+            border_width = 2
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(border_color, border_width))
         painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
 
     @staticmethod

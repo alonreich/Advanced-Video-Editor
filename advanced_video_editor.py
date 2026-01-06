@@ -32,12 +32,6 @@ def enable_drag_drop_for_elevated_app(hwnd):
     ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
     ChangeWindowMessageFilterEx.argtypes = [HWND, UINT, DWORD, ctypes.POINTER(ctypes.c_void_p)]
     ChangeWindowMessageFilterEx.restype = ctypes.c_bool
-    if not isinstance(hwnd, int):
-        try:
-            hwnd = hwnd.winId().__int__()
-        except AttributeError:
-            logging.getLogger("Advanced_Video_Editor").warning("Invalid window handle provided for UIPI workaround.")
-            return False
     success_dropfiles = ChangeWindowMessageFilterEx(HWND(hwnd), WM_DROPFILES, MSGFLT_ADD, None)
     success_copydata = ChangeWindowMessageFilterEx(HWND(hwnd), WM_COPYDATA, MSGFLT_ADD, None)
     success_globaldata = ChangeWindowMessageFilterEx(HWND(hwnd), WM_COPYGLOBALDATA, MSGFLT_ADD, None)

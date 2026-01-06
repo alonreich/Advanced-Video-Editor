@@ -37,14 +37,14 @@ class RenderWorker(QThread):
             if gpu_codec != 'libx264':
                 is_modern = gpu_codec in ['av1_nvenc', 'hevc_nvenc']
                 preset = 'p7' if is_modern else 'p4'
-                cq_value = '20' if gpu_codec == 'av1_nvenc' else ('19' if gpu_codec == 'hevc_nvenc' else '23')
+                cq_value = '18' if is_modern else '21'
                 cmd.extend(['-c:v', gpu_codec, '-pix_fmt', 'p010le' if is_modern else 'yuv420p'])
-                cmd.extend(['-preset', preset, '-rc', 'vbr', '-cq', cq_value, '-b:v', '0'])
+                cmd.extend(['-preset', preset, '-tier', 'high', '-rc', 'vbr', '-cq', cq_value, '-b:v', '0', '-rc-lookahead', '32'])
                 if gpu_codec == 'hevc_nvenc':
                     cmd.extend(['-spatial-aq', '1', '-temporal-aq', '1'])
             else:
-                cmd.extend(['-c:v', 'libx264', '-preset', 'fast', '-crf', '23'])
-            cmd.extend(['-c:a', 'aac', '-b:a', '192k'])
+                cmd.extend(['-c:v', 'libx264', '-preset', 'medium', '-crf', '18'])
+            cmd.extend(['-c:a', 'aac', '-b:a', '320k'])
             cmd.append(self.out)
             self.logger.info(f"Render CMD: {' '.join(cmd)}")
             self.process = QProcess()

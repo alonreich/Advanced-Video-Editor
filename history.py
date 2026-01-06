@@ -20,7 +20,13 @@ class UndoStack:
                 return
             self.undo_stack.append(command)
             self.redo_stack.clear()
-            self.current_state_map = {uid: copy.deepcopy(data) for uid, data in new_state_map.items()}
+            updated_state_map = {}
+            for uid, data in new_state_map.items():
+                if uid in command['added'] or uid in command['modified']:
+                    updated_state_map[uid] = copy.deepcopy(data)
+                else:
+                    updated_state_map[uid] = self.current_state_map.get(uid, data)
+            self.current_state_map = updated_state_map
             if len(self.undo_stack) > self.max_depth:
                 self.undo_stack.pop(0)
             self.logger.debug(f"[HISTORY] Smart Push: +{len(command['added'])} -{len(command['removed'])} ~{len(command['modified'])}")

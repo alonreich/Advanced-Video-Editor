@@ -39,7 +39,7 @@ class SafeOverlay(QWidget):
         self.transform_rect = QRectF()
         self.crop_rect = QRectF()
         self.handles = []
-        self.handle_size = 10
+        self.handle_size = 14
         self.dash_offset = 0
         self.is_recording = False
         self.target_res = (1920, 1080)
@@ -116,7 +116,6 @@ class SafeOverlay(QWidget):
         super().resizeEvent(event)
 
     def get_video_rect(self):
-        """Calculates the exact letterboxed area where VLC renders the video."""
         w, h = self.width(), self.height()
         target_w, target_h = self.target_res
         if target_w == 0 or target_h == 0: return QRectF(self.rect())
@@ -159,7 +158,6 @@ class SafeOverlay(QWidget):
             self.draw_transform_controls(p, v_rect)
 
     def draw_portrait_guides(self, p, v_rect):
-        """Goal 10: Dim out-of-bounds media at 50% transparency."""
         widget_rect = self.rect()
         p.save()
         from PyQt5.QtGui import QPainterPath
@@ -209,6 +207,7 @@ class SafeOverlay(QWidget):
         p.drawRect(self.crop_rect)
         self.update_handles(for_crop=True)
         p.setBrush(Qt.yellow)
+        p.setPen(QPen(Qt.black, 1))
         for handle in self.handles:
             p.drawRect(handle)
 
@@ -220,6 +219,25 @@ class SafeOverlay(QWidget):
         self.handles.append(QRectF(r.right() - hs/2, r.top() - hs/2, hs, hs))
         self.handles.append(QRectF(r.right() - hs/2, r.bottom() - hs/2, hs, hs))
         self.handles.append(QRectF(r.left() - hs/2, r.bottom() - hs/2, hs, hs))
+
+    def handle_arrow_keys(self, event):
+        if not self.selected_clip or not self.crop_mode: return
+        step = 0.005
+        dx, dy = 0.0, 0.0
+        if event.key() == Qt.Key_Left: dx = -step
+        elif event.key() == Qt.Key_Right: dx = step
+        elif event.key() == Qt.Key_Up: dy = -step
+        elif event.key() == Qt.Key_Down: dy = step
+        c = self.selected_clip
+        w = c.crop_x2 - c.crop_x1
+        h = c.crop_y2 - c.crop_y1
+        nx1 = max(0.0, min(1.0 - w, c.crop_x1 + dx))
+        ny1 = max(0.0, min(1.0 - h, c.crop_y1 + dy))
+        self.param_changed.emit("crop_x1", nx1)
+        self.param_changed.emit("crop_y1", ny1)
+        self.param_changed.emit("crop_x2", nx1 + w)
+        self.param_changed.emit("crop_y2", ny1 + h)
+        self.update()
 
     def mousePressEvent(self, event):
         try:
@@ -233,6 +251,12 @@ class SafeOverlay(QWidget):
                         self.drag_start_rect = QRectF(self.crop_rect)
                         self.interaction_started.emit()
                         return
+                if self.crop_rect.contains(event.pos()):
+                    self.dragging = True
+                    self.drag_handle = "crop_pan"
+                    self.drag_start_rect = QRectF(self.crop_rect)
+                    self.interaction_started.emit()
+                    return
                 self.dragging = True
                 self.drag_handle = "crop_draw"
                 self.interaction_started.emit()
@@ -257,7 +281,6 @@ class SafeOverlay(QWidget):
             self.logger.error(f"[OVERLAY] Press Error: {e}")
 
     def mouseMoveEvent(self, event):
-        """Goal 16: Real-time coordinate transformation for visual transforms."""
         try:
             if not self.dragging or not self.selected_clip:
                 return
@@ -268,7 +291,24 @@ class SafeOverlay(QWidget):
             dx_norm = delta.x() / v_rect.width()
             dy_norm = delta.y() / v_rect.height()
             if self.crop_mode:
-                if self.drag_handle == "crop_draw":
+                if self.drag_handle == "crop_pan":
+                    start_x, start_y = self.to_video_coords(self.drag_start_pos)
+                    curr_x, curr_y = self.to_video_coords(event.pos())
+                    dx = curr_x - start_x
+                    dy = curr_y - start_y
+                    old_c = self.selected_clip
+                    new_x1 = max(0.0, min(1.0, old_c.crop_x1 + dx))
+                    new_y1 = max(0.0, min(1.0, old_c.crop_y1 + dy))
+                    w = old_c.crop_x2 - old_c.crop_x1
+                    h = old_c.crop_y2 - old_c.crop_y1
+                    if new_x1 + w > 1.0: new_x1 = 1.0 - w
+                    if new_y1 + h > 1.0: new_y1 = 1.0 - h
+                    self.param_changed.emit("crop_x1", new_x1)
+                    self.param_changed.emit("crop_y1", new_y1)
+                    self.param_changed.emit("crop_x2", new_x1 + w)
+                    self.param_changed.emit("crop_y2", new_y1 + h)
+                    self.drag_start_pos = event.pos()
+                elif self.drag_handle == "crop_draw":
                     start_x, start_y = self.to_video_coords(self.drag_start_pos)
                     curr_x, curr_y = self.to_video_coords(event.pos())
                     x1, y1 = max(0.0, min(1.0, min(start_x, curr_x))), max(0.0, min(1.0, min(start_y, curr_y)))
@@ -359,9 +399,11 @@ class PreviewWidget(QWidget):
         layout.addWidget(self.container)
 
     def set_player(self, player):
-        """Connects the player node and stacks the overlay on top."""
         self.player = player
         self.container.layout().addWidget(player)
+        if not self.player.winId():
+            self.player.createWinId()
+        self.player.initialize_mpv(wid=int(self.player.winId()))
         self.overlay.setParent(player)
         self.overlay.stackUnder(None)
         self.overlay.setGeometry(player.rect())
