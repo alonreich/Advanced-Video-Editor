@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 
 class FilterGraphGenerator:
     def __init__(self, clips, width=1920, height=1080, volumes=None, mutes=None):
@@ -25,7 +25,10 @@ class FilterGraphGenerator:
                 higher_end = higher['start'] + higher['dur']
                 clip_end = clip['start'] + clip['dur']
                 time_covered = (higher['start'] <= clip['start'] and higher_end >= clip_end)
-                is_full_screen = (higher.get('scale_x', 1.0) >= 1.0 and higher.get('scale_y', 1.0) >= 1.0 and
+                is_cropped = (higher.get('crop_x1', 0.0) > 0.01 or higher.get('crop_y1', 0.0) > 0.01 or 
+                              higher.get('crop_x2', 1.0) < 0.99 or higher.get('crop_y2', 1.0) < 0.99)
+                is_full_screen = (not is_cropped and 
+                                  higher.get('scale_x', 1.0) >= 1.0 and higher.get('scale_y', 1.0) >= 1.0 and
                                   abs(higher.get('pos_x', 0)) < 0.01 and abs(higher.get('pos_y', 0)) < 0.01)
                 if time_covered and is_full_screen and higher.get('opacity', 1.0) == 1.0:
                     fade_in_end = higher['start'] + higher.get('fade_in', 0)
@@ -68,12 +71,19 @@ class FilterGraphGenerator:
                 cx = f"iw*{clip['crop_x1']}"
                 cy = f"ih*{clip['crop_y1']}"
                 chain.append(f"crop={cw}:{ch}:{cx}:{cy}")
+            fade_in = float(clip.get('fade_in', 0.0))
+            fade_out = float(clip.get('fade_out', 0.0))
+            if fade_in > 0:
+                chain.append(f"fade=t=in:st=0:d={fade_in:.3f}")
+            if fade_out > 0:
+                start_fade_out = (clip['dur'] * speed) - fade_out
+                chain.append(f"fade=t=out:st={start_fade_out:.3f}:d={fade_out:.3f}")
             opacity = clip.get('opacity', 1.0)
             if opacity < 1.0:
                 chain.append(f"format=rgba,colorchannelmixer=aa={opacity:.2f}")
             target_w = int(self.w * clip.get('scale_x', 1.0))
             target_h = int(self.h * clip.get('scale_y', 1.0))
-            chain.append(f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2")
+            chain.append(f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black@0")
             if is_export: chain.append("setsar=1")
             filter_parts.append(",".join(chain) + f"[{lbl}_p]")
             x = (self.w - target_w)/2 + (self.w * clip.get('pos_x', 0))

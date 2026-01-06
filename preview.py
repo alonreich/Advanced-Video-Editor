@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QStyle
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QStyle
 from PyQt5.QtGui import QPainter, QColor, QPen, QRegion
 from PyQt5.QtCore import Qt, QRect, QPointF, QRectF, pyqtSignal, QTimer
 
@@ -49,6 +49,16 @@ class SafeOverlay(QWidget):
         self.dash_timer.start(100)
         self.is_snapped_x = False
         self.is_snapped_y = False
+        self.backup_crop = {}
+        self.btn_confirm = QPushButton("Confirm", self)
+        self.btn_confirm = QPushButton("âœ” APPLY CROP", self)
+        self.btn_confirm.clicked.connect(self.confirm_crop)
+        self.btn_confirm.setStyleSheet("background-color: #00E676; color: black; border: 2px solid #00A854; border-radius: 4px; font-weight: bold; font-size: 14px;")
+        self.btn_confirm.hide()
+        self.btn_cancel = QPushButton("âœ– CANCEL", self)
+        self.btn_cancel.clicked.connect(self.cancel_crop)
+        self.btn_cancel.setStyleSheet("background-color: #FF1744; color: white; border: 2px solid #D50000; border-radius: 4px; font-weight: bold; font-size: 14px;")
+        self.btn_cancel.hide()
         import logging
         self.logger = logging.getLogger(__name__)
 
@@ -67,7 +77,43 @@ class SafeOverlay(QWidget):
 
     def toggle_crop_mode(self):
         self.crop_mode = not self.crop_mode
+        if self.crop_mode and self.selected_clip:
+            if hasattr(self.parent(), 'apply_crop'):
+                self.parent().apply_crop(None) 
+            self.backup_crop = {
+                'crop_x1': self.selected_clip.crop_x1,
+                'crop_y1': self.selected_clip.crop_y1,
+                'crop_x2': self.selected_clip.crop_x2,
+                'crop_y2': self.selected_clip.crop_y2
+            }
+            self.btn_confirm.raise_()
+            self.btn_cancel.raise_()
+            self.btn_confirm.show()
+            self.btn_cancel.show()
+        else:
+            if hasattr(self.parent(), 'apply_crop'):
+                self.parent().apply_crop(self.selected_clip)
+            self.btn_confirm.hide()
+            self.btn_cancel.hide()
         self.update()
+
+    def confirm_crop(self):
+        self.toggle_crop_mode()
+        if self.parent() and hasattr(self.parent().parent(), 'btn_crop'):
+            self.parent().parent().btn_crop.setChecked(False)
+
+    def cancel_crop(self):
+        if self.backup_crop:
+            for k, v in self.backup_crop.items():
+                self.param_changed.emit(k, v)
+        self.toggle_crop_mode()
+        
+    def resizeEvent(self, event):
+        w = event.size().width()
+        h = event.size().height()
+        self.btn_confirm.setGeometry(w//2 - 150, h - 60, 140, 40)
+        self.btn_cancel.setGeometry(w//2 + 10, h - 60, 140, 40)
+        super().resizeEvent(event)
 
     def get_video_rect(self):
         """Calculates the exact letterboxed area where VLC renders the video."""

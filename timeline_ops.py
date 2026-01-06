@@ -1,141 +1,1 @@
-﻿import uuid
-from PyQt5.QtGui import QPen
-from PyQt5.QtCore import Qt, QPointF
-from clip_item import ClipItem
-from model import ClipModel
-
-class TimelineOperations:
-    def __init__(self, view):
-        self.view = view 
-
-    def split_audio_video(self, clip_item):
-        """Goal 7: Separate video and audio into independent entities."""
-        if clip_item.model.media_type != 'video' or not clip_item.model.has_audio:
-            self.view.logger.warning("[AUDIO-SPLIT] Item has no audio stream to separate.")
-            return
-        self.view.logger.info(f"[AUDIO-SPLIT] Separating streams for: {clip_item.name}")
-        audio_data = clip_item.model.to_dict()
-        audio_data.update({
-            'uid': str(uuid.uuid4()),
-            'name': f"{clip_item.name} (Audio)",
-            'media_type': 'audio',
-            'track': clip_item.track + 1,
-            'width': 0,
-            'height': 0,
-            'has_audio': True,
-            'linked_uid': clip_item.uid
-        })
-        clip_item.model.has_audio = False 
-        clip_item.model.linked_uid = audio_data['uid']
-        self.view.add_clip(audio_data)
-        self.view.mw.playback.mark_dirty(serious=True)
-        self.view.data_changed.emit()
-        self.view.scene.update()
-
-    def get_snapped_x(self, x_pos, track_idx=None, ignore_item=None, threshold=20):
-        if not self.view.snapping_enabled:
-            if self.view.snap_line:
-                self.view.scene.removeItem(self.view.snap_line)
-                self.view.snap_line = None
-            return x_pos
-        snaps = [0, self.view.playhead_pos * self.view.scale_factor]
-        for item in self.view.scene.items():
-            if isinstance(item, ClipItem) and item != ignore_item:
-                is_same = (track_idx is not None and item.track == track_idx)
-                eff_th = threshold * 1.5 if is_same else threshold
-                sx, ex = item.x(), item.x() + item.rect().width()
-                if abs(x_pos - sx) < eff_th: snaps.append(sx)
-                if abs(x_pos - ex) < eff_th: snaps.append(ex)
-        closest, min_dist = None, float('inf')
-        for s in snaps:
-            dist = abs(x_pos - s)
-            if dist < min_dist: min_dist, closest = dist, s
-        if self.view.snap_line:
-            self.view.scene.removeItem(self.view.snap_line)
-            self.view.snap_line = None
-        if min_dist <= threshold and closest is not None:
-            pen = QPen(Qt.cyan, 1)
-            h = self.view.scene.height()
-            self.view.snap_line = self.view.scene.addLine(closest, 0, closest, h, pen)
-            self.view.snap_line.setZValue(100)
-            return closest
-        return x_pos
-
-    def compact_lanes(self):
-        items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]
-        if not items:
-            self.view.set_num_tracks(3)
-            return
-        occupied = sorted(list(set(i.track for i in items)))
-        if not occupied:
-            self.view.set_num_tracks(3)
-            return
-        if len(occupied) <= 2:
-            self.view.set_num_tracks(3)
-        else:
-            self.view.set_num_tracks(len(occupied))
-        mapping = {old: new for new, old in enumerate(occupied)}
-        if all(k==v for k,v in mapping.items()): return
-        self.view.logger.info(f"Compacting: {mapping}")
-        for item in items:
-            if item.track in mapping:
-                new_t = mapping[item.track]
-                item.track = new_t
-                item.model.track = new_t
-                item.setY(new_t * self.view.track_height + 35)
-        self.view.data_changed.emit()
-        self.view.scene.update()
-
-    def reorder_tracks(self, s_idx, t_idx):
-        if s_idx == t_idx: return
-        self.view.scene.blockSignals(True)
-        try:
-            items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]
-            src_items = [i for i in items if i.track == s_idx]
-            if s_idx < t_idx:
-                for i in items:
-                    if s_idx < i.track <= t_idx:
-                        i.track -= 1
-                        i.model.track -= 1
-                        i.setY(i.track * self.view.track_height + 35)
-            else:
-                for i in items:
-                    if t_idx <= i.track < s_idx:
-                        i.track += 1
-                        i.model.track += 1
-                        i.setY(i.track * self.view.track_height + 35)
-            for i in src_items:
-                i.track = t_idx
-                i.model.track = t_idx
-                i.setY(t_idx * self.view.track_height + 35)
-        finally:
-            self.view.scene.blockSignals(False)
-        self.view.data_changed.emit()
-        self.view.scene.update()
-
-    def move_clip(self, clip_uid, pos, moving_linked=False):
-        target_item = None
-        for item in self.view.scene.items():
-            if isinstance(item, ClipItem) and item.model.uid == clip_uid:
-                target_item = item
-                break
-        if target_item:
-            target_item.setPos(QPointF(pos[0] * self.view.scale_factor, pos[1] * self.view.track_height + 35))
-            target_item.model.start = pos[0]
-            target_item.model.track = pos[1]
-            if target_item.model.linked_uid and not moving_linked:
-                self.move_clip(target_item.model.linked_uid, pos, moving_linked=True)
-        return
-
-    def set_clip_param(self, clip_uid, param, value):
-        for item in self.view.scene.items():
-            if isinstance(item, ClipItem) and item.model.uid == clip_uid:
-                setattr(item.model, param, value)
-                item.update()
-                return
-
-    def update_clip_proxy_path(self, source_path, proxy_path):
-        for item in self.view.scene.items():
-            if isinstance(item, ClipItem) and item.model.path == source_path:
-                item.model.proxy_path = proxy_path
-                return
+import uuidfrom PyQt5.QtGui import QPenfrom PyQt5.QtCore import Qt, QPointFfrom clip_item import ClipItemfrom model import ClipModelclass TimelineOperations:    def __init__(self, view):        self.view = view     def split_audio_video(self, clip_item):        """Goal 7: Separate video and audio into independent entities."""        if clip_item.model.media_type != 'video' or not clip_item.model.has_audio:            self.view.logger.warning("[AUDIO-SPLIT] Item has no audio stream to separate.")            return        self.view.mw.save_state_for_undo()        self.view.logger.info(f"[AUDIO-SPLIT] Pushing tracks down to separate: {clip_item.name}")        target_track = clip_item.track + 1        all_items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]        for item in all_items:            if item.track >= target_track:                item.track += 1                item.model.track = item.track                item.setY(item.track * self.view.track_height + 30)        self.view.mw.timeline.add_track()        audio_data = clip_item.model.to_dict()        audio_data.update({            'uid': str(uuid.uuid4()),            'name': f"{clip_item.name} (Audio)",            'media_type': 'audio',            'track': target_track,            'width': 0, 'height': 0,            'has_audio': True,            'linked_uid': clip_item.uid        })        clip_item.model.linked_uid = audio_data['uid']        self.view.add_clip(audio_data)        self.view.mw.playback.mark_dirty(serious=True)        self.view.data_changed.emit()        self.view.scene.update()    def get_snapped_x(self, x_pos, track_idx=None, ignore_item=None, threshold=20):        if not self.view.snapping_enabled:            if self.view.snap_line:                self.view.scene.removeItem(self.view.snap_line)                self.view.snap_line = None            return x_pos        snaps = [0, self.view.playhead_pos * self.view.scale_factor]        for item in self.view.scene.items():            if isinstance(item, ClipItem) and item != ignore_item:                is_same = (track_idx is not None and item.track == track_idx)                eff_th = threshold * 1.5 if is_same else threshold                sx, ex = item.x(), item.x() + item.rect().width()                if abs(x_pos - sx) < eff_th: snaps.append(sx)                if abs(x_pos - ex) < eff_th: snaps.append(ex)        closest, min_dist = None, float('inf')        for s in snaps:            dist = abs(x_pos - s)            if dist < min_dist: min_dist, closest = dist, s        if self.view.snap_line:            self.view.scene.removeItem(self.view.snap_line)            self.view.snap_line = None        if min_dist <= threshold and closest is not None:            pen = QPen(Qt.cyan, 1)            h = self.view.scene.height()            self.view.snap_line = self.view.scene.addLine(closest, 0, closest, h, pen)            self.view.snap_line.setZValue(100)            return closest        return x_pos    def compact_lanes(self):        items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]        if not items:            self.view.set_num_tracks(3)            return        occupied = sorted(list(set(i.track for i in items)))        if not occupied:            self.view.set_num_tracks(3)            return        if len(occupied) <= 2:            self.view.set_num_tracks(3)        else:            self.view.set_num_tracks(len(occupied))        mapping = {old: new for new, old in enumerate(occupied)}        if all(k==v for k,v in mapping.items()): return        self.view.logger.info(f"Compacting: {mapping}")        for item in items:            if item.track in mapping:                new_t = mapping[item.track]                item.track = new_t                item.model.track = new_t                item.setY(new_t * self.view.track_height + 30)        self.view.data_changed.emit()        self.view.scene.update()    def reorder_tracks(self, s_idx, t_idx):        if s_idx == t_idx: return        self.view.scene.blockSignals(True)        try:            items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]            src_items = [i for i in items if i.track == s_idx]            if s_idx < t_idx:                for i in items:                    if s_idx < i.track <= t_idx:                        i.track -= 1                        i.model.track -= 1                        i.setY(i.track * self.view.track_height + 30)            else:                for i in items:                    if t_idx <= i.track < s_idx:                        i.track += 1                        i.model.track += 1                        i.setY(i.track * self.view.track_height + 30)            for i in src_items:                i.track = t_idx                i.model.track = t_idx                i.setY(t_idx * self.view.track_height + 30)        finally:            self.view.scene.blockSignals(False)        self.view.data_changed.emit()        self.view.scene.update()    def move_clip(self, clip_uid, pos, moving_linked=False):        target_item = None        for item in self.view.scene.items():            if isinstance(item, ClipItem) and item.model.uid == clip_uid:                target_item = item                break        if target_item:            target_item.setPos(QPointF(pos[0] * self.view.scale_factor, pos[1] * self.view.track_height + 30))            target_item.model.start = pos[0]            target_item.model.track = pos[1]            if target_item.model.linked_uid and not moving_linked:                self.move_clip(target_item.model.linked_uid, pos, moving_linked=True)        return    def set_clip_param(self, clip_uid, param, value):        for item in self.view.scene.items():            if isinstance(item, ClipItem) and item.model.uid == clip_uid:                setattr(item.model, param, value)                item.update()                return    def update_clip_proxy_path(self, source_path, proxy_path):        for item in self.view.scene.items():            if isinstance(item, ClipItem) and item.model.path == source_path:                item.model.proxy_path = proxy_path                # FIX: Force repaint so the "P" appears instantly                item.update_cache()                item.update()                return

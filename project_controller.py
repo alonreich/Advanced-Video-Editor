@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import copy
 import logging
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QApplication, QAction
 from PyQt5.QtCore import QTimer, Qt, QByteArray
@@ -23,19 +24,24 @@ class ProjectController:
             self.mw.history.push(self.mw.timeline.get_state())
 
     def switch_project(self, path):
-        self.mw.save_state_for_undo()
+        self.mw.media_pool.clear()
+        self.mw.timeline.load_state([])
         data = self.pm.load_project_from_dir(path)
         if data:
-            self.mw.timeline.load_state(data.get('timeline', []))
-            self.mw.history.current_state_map = {c['uid']: c for c in self.mw.timeline.get_state()}
-            self.restore_ui_state(data.get('ui_state', {}))
+            timeline_data = data.get('timeline', [])
             self.mw.media_pool.clear()
-            for item in self.mw.timeline.get_state():
-                path = item.get('path')
-                if path:
-                    self.mw.media_pool.add_file(path)
+            self.mw.timeline.load_state(timeline_data)
+            self.mw.history.current_state_map = {c['uid']: copy.deepcopy(c) for c in timeline_data}
+            self.restore_ui_state(data.get('ui_state', {}))
+            seen_assets = set()
+            for item in timeline_data:
+                file_path = item.get('path')
+                if file_path and file_path not in seen_assets:
+                    self.mw.media_pool.add_file(file_path)
+                    seen_assets.add(file_path)
                 self.mw.asset_loader.regenerate_assets(item)
             self.mw.setWindowTitle(f"Advanced Video Editor - {self.pm.project_name}")
+            self.mw.save_state_for_undo()
 
     def run_autosave(self):
         if not self.mw.is_dirty: return
@@ -43,7 +49,8 @@ class ProjectController:
             "playhead": self.mw.timeline.playhead_pos,
             "zoom": self.mw.timeline.scale_factor,
             "scroll_x": self.mw.timeline.horizontalScrollBar().value(),
-            "scroll_y": self.mw.timeline.verticalScrollBar().value()
+            "scroll_y": self.mw.timeline.verticalScrollBar().value(),
+            "resolution": self.mw.inspector.combo_res.currentText()
         }
         self.pm.save_state(self.mw.timeline.get_state(), ui, is_autosave=True)
 
@@ -51,6 +58,12 @@ class ProjectController:
         if not ui: return
         self.mw.timeline.set_time(ui.get('playhead', 0.0))
         self.mw.timeline.scale_factor = ui.get('zoom', 50)
+        res = ui.get('resolution', "Landscape 1920x1080 (HD)")
+        idx = self.mw.inspector.combo_res.findText(res)
+        if idx >= 0:
+            self.mw.inspector.combo_res.setCurrentIndex(idx)
+        else:
+            self.mw.inspector.combo_res.setCurrentIndex(0)
         self.mw.timeline.fit_to_view()
 
     def reset_project(self):

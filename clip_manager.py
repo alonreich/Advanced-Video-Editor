@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from PyQt5.QtWidgets import QApplication
 from clip_item import ClipItem
 
@@ -8,7 +8,7 @@ class ClipManager:
         self.undo_lock = False
 
     def undo_lock_acquire(self):
-         self.undo_lock = True
+        self.undo_lock = True
 
     def undo_lock_release(self):
         self.undo_lock = False
@@ -27,7 +27,7 @@ class ClipManager:
         right_dur = item.duration - split_rel
         item.duration = split_rel
         item.model.duration = split_rel
-        item.setRect(0, 0, split_rel * item.scale, 30)
+        item.setRect(0, 0, split_rel * item.scale, 40)
         new_data = item.model.to_dict()
         new_uid = str(uuid.uuid4())
         new_data.update({
@@ -60,9 +60,9 @@ class ClipManager:
         track = item.track
         start = item.model.start
         dur = item.model.duration
-        subsequent_clips = [i for i in self.mw.timeline.scene.items()
-                           if isinstance(i, ClipItem) and i != item
-                           and i.track == track and i.model.start > start]
+        subsequent_clips = [i for i in self.mw.timeline.scene.items() 
+                            if isinstance(i, ClipItem) and i != item 
+                            and i.track == track and i.model.start > start]
         for i in subsequent_clips:
             i.model.start -= dur
             i.setX(i.model.start * i.scale)
@@ -89,7 +89,8 @@ class ClipManager:
                 self.mw.playback.mark_dirty(serious=True)
         elif param == "volume":
             item.set_volume(value)
-            if self.mw.player_node.is_playing(): self.mw.player_node.set_volume(value)
+            if self.mw.player_node.is_playing(): 
+                self.mw.player_node.set_volume(value)
         elif param in ["crop_x1", "crop_y1", "crop_x2", "crop_y2", "pos_x", "pos_y", "scale_x", "scale_y"]:
             setattr(item.model, param, value)
             self.mw.preview.overlay.update()
@@ -132,6 +133,6 @@ class ClipManager:
                 linked_item.model.linked_uid = None
             self.mw.logger.info(f"Link severed for clip {clip_uid}")
             target_item.update()
-            if self.mw.player_node.is_playing() and "crop" in param:
-                self.mw.player_node.apply_crop(item.model)
-#test
+            is_crop_mode = getattr(self.mw.preview.overlay, 'crop_mode', False)
+            if self.mw.player_node.is_playing() and not is_crop_mode:
+                self.mw.player_node.apply_crop(target_item.model)

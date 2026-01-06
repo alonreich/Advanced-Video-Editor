@@ -1,4 +1,4 @@
-﻿from PyQt5.QtGui import QPainter, QLinearGradient, QColor, QBrush, QPen, QPixmap
+from PyQt5.QtGui import QPainter, QLinearGradient, QColor, QBrush, QPen, QPixmap, QFont
 from PyQt5.QtCore import Qt, QRectF
 
 class ClipPainter:
@@ -11,9 +11,9 @@ class ClipPainter:
             border = QColor(255, 0, 0)
             width = 2
         elif is_selected:
-            grad.setColorAt(0, QColor(70, 130, 180))
-            grad.setColorAt(1, QColor(50, 100, 150))
-            border = QColor(255, 215, 0)
+            grad.setColorAt(0, QColor(255, 204, 0))
+            grad.setColorAt(1, QColor(218, 165, 32))
+            border = QColor(255, 255, 255)
             width = 2
         elif is_audio:
             grad.setColorAt(0, QColor(40, 80, 50))
@@ -28,6 +28,7 @@ class ClipPainter:
         painter.setBrush(QBrush(grad))
         painter.setPen(QPen(border, width))
         painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
+
     @staticmethod
     def draw_waveform(painter, rect, pixmap, model, scale):
         if not pixmap or model.media_type != 'audio': return
@@ -40,6 +41,7 @@ class ClipPainter:
         painter.setOpacity(0.8)
         painter.drawPixmap(int(x_offset), 0, int(full_w), int(rect.height()), pixmap)
         painter.restore()
+
     @staticmethod
     def draw_thumbnails(painter, rect, start_pm, end_pm, model):
         if model.media_type != 'video' or not start_pm: return
@@ -59,6 +61,7 @@ class ClipPainter:
             current_x += correct_w
             idx += 1
         painter.restore()
+
     @staticmethod
     def draw_fades(painter, rect, model, scale):
         fi_w = model.fade_in * scale
@@ -74,3 +77,19 @@ class ClipPainter:
             g.setColorAt(0, QColor(0,0,0,0))
             g.setColorAt(1, QColor(0,0,0,200))
             painter.fillRect(QRectF(x_s, 0, fo_w, rect.height()), g)
+
+    @staticmethod
+    def draw_proxy_indicator(painter, rect):
+        """Draws a Cyan 'P' badge in the top-right corner."""
+        size = 16
+        margin = 4
+        badge_rect = QRectF(rect.width() - size - margin, margin, size, size)
+        painter.save()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 255, 255, 180))
+        painter.drawRoundedRect(badge_rect, 4, 4)
+        painter.setPen(QColor(0, 0, 0))
+        f = QFont("Segoe UI", 10, QFont.Bold)
+        painter.setFont(f)
+        painter.drawText(badge_rect, Qt.AlignCenter, "P")
+        painter.restore()

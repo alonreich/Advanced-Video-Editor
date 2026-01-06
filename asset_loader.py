@@ -1,27 +1,35 @@
-﻿import os
+import os
 from PyQt5.QtWidgets import QFileDialog, QListWidgetItem
-from PyQt5.QtCore import Qt, QObject
+from PyQt5.QtCore import Qt, QObject, QThreadPool
 from PyQt5.QtGui import QPixmap
 from prober import ProbeWorker, WaveformWorker
 from worker import ThumbnailWorker
 from clip_item import ClipItem
 
 class AssetLoader(QObject):
-
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
         self.base_dir = main_window.base_dir
+        self.thread_pool = QThreadPool()
+        self.thread_pool.setMaxThreadCount(os.cpu_count() or 4)
         self.thumb_worker = ThumbnailWorker(self.base_dir)
         self.thumb_worker.thumbnail_generated.connect(self.on_thumb_done)
         self.thumb_worker.start()
-        self.wave_workers = []
+        self.wave_worker = WaveformWorker(self.base_dir)
+        self.wave_worker.finished.connect(self.on_wave_done)
+        self.wave_worker.start()
+        from worker import ProxyWorker
+        self.proxy_worker = ProxyWorker(self.base_dir)
+        self.proxy_worker.proxy_finished.connect(self.on_proxy_done)
+        self.proxy_worker.start()
         from PyQt5.QtCore import QTimer
         self._regen_timer = QTimer()
         self._regen_timer.setSingleShot(True)
         self._regen_timer.setInterval(200)
         self._regen_timer.timeout.connect(self._process_regen_queue)
         self._regen_queue = {}
+        self._pending_probes = set()
 
     def import_dialog(self, music_only=False):
         last = self.mw.config.get("last_import", self.base_dir)
@@ -31,29 +39,36 @@ class AssetLoader(QObject):
             paths, _ = QFileDialog.getOpenFileNames(self.mw, "Import", last)
         if paths:
             self.mw.config.set("last_import", os.path.dirname(paths[0]))
-            for p in paths:
+            next_track = 0
+            if self.mw.timeline.timeline_view.scene:
+                for item in self.mw.timeline.timeline_view.scene.items():
+                    if isinstance(item, ClipItem):
+                        next_track = max(next_track, item.track + 1)
+            next_track = max(1, next_track)
+            for i, p in enumerate(paths):
                 local_path = self.mw.pm.import_asset(p)
                 item = QListWidgetItem(os.path.basename(local_path))
                 item.setData(Qt.UserRole, local_path)
                 self.mw.media_pool.addItem(item)
                 if music_only:
-                    next_track = 0
-                    if self.mw.timeline.timeline_view.scene:
-                        for item in self.mw.timeline.timeline_view.scene.items():
-                            if isinstance(item, ClipItem):
-                                next_track = max(next_track, item.track + 1)
-                    self.handle_drop(local_path, next_track, 0)
+                    self.handle_drop(local_path, next_track + i, 0)
 
     def handle_drop(self, path, track, time):
+        is_audio = any(path.lower().endswith(x) for x in ['.mp3', '.wav', '.aac', '.flac', '.m4a'])
         if track == -1:
             occupied_tracks = set()
             if self.mw.timeline.timeline_view.scene:
                 for item in self.mw.timeline.timeline_view.scene.items():
                     if hasattr(item, 'track'):
                         occupied_tracks.add(item.track)
-            track = 0
-            while track in occupied_tracks:
-                track += 1
+            if is_audio:
+                track = 1
+                if occupied_tracks:
+                    track = max(occupied_tracks) + 1
+            else:
+                track = 0
+                while track in occupied_tracks:
+                    track += 1
         is_internal = False
         if self.mw.pm.assets_dir and os.path.abspath(path).startswith(os.path.abspath(self.mw.pm.assets_dir)):
             is_internal = True
@@ -61,17 +76,22 @@ class AssetLoader(QObject):
             local_path = path
         else:
             local_path = self.mw.pm.import_asset(path)
-        worker = ProbeWorker(local_path)
-        worker.target = (track, time)
-        worker.result.connect(self.on_probe_done)
-        worker.start()
-        self.mw._keep_worker = worker
+        if local_path in self._pending_probes:
+            self.mw.logger.warning(f"Ignored duplicate drop event for: {local_path}")
+            return
+        self._pending_probes.add(local_path)
+        worker = ProbeWorker(local_path, track_id=track, insert_time=time)
+        worker.signals.result.connect(self.on_probe_done)
+        self.thread_pool.start(worker)
 
     def on_probe_done(self, info):
+        track = info.get('track_id', 0)
+        time = info.get('insert_time', 0.0)
+        if 'path' in info and info['path'] in self._pending_probes:
+            self._pending_probes.discard(info['path'])
         if 'error' in info:
-            self.mw.logger.error(f"Failed to probe file: {info['error']}")
+            self.mw.logger.error(f"Failed to probe file: {info.get('error')}")
             return
-        track, time = getattr(self.sender(), 'target', (0, 0.0))
         self.mw.logger.info(f"on_probe_done: Adding clip to track {track}")
         v_uid = os.urandom(4).hex()
         a_uid = os.urandom(4).hex() if info.get('has_audio') and info.get('has_video') else None
@@ -89,16 +109,6 @@ class AssetLoader(QObject):
         }
         self.mw.timeline.add_clip(video_data)
         self.regenerate_assets(video_data)
-        if a_uid:
-            audio_data = video_data.copy()
-            audio_data.update({
-                'uid': a_uid,
-                'track': track + 1,
-                'media_type': 'audio',
-                'linked_uid': v_uid
-            })
-            self.mw.timeline.add_clip(audio_data)
-            self.regenerate_assets(audio_data)
 
     def regenerate_assets(self, data):
         self._regen_queue[data['uid']] = data
@@ -108,10 +118,7 @@ class AssetLoader(QObject):
         while self._regen_queue:
             uid, data = self._regen_queue.popitem()
             if data.get('has_audio'):
-                w = WaveformWorker(data['path'], data['uid'], self.base_dir)
-                w.finished.connect(self.on_wave_done)
-                self.wave_workers.append(w)
-                w.start()
+                self.wave_worker.add_task(data['path'], data['uid'])
             if data.get('media_type') == 'video':
                 self.thumb_worker.add_task(data['path'], data['uid'], data['dur'])
 
@@ -121,6 +128,7 @@ class AssetLoader(QObject):
                 i.waveform_pixmap = QPixmap(path)
                 i.update_cache()
                 i.update()
+                
     def on_thumb_done(self, uid, start_p, end_p):
         for i in self.mw.timeline.scene.items():
             if isinstance(i, ClipItem) and i.uid == uid:
@@ -133,3 +141,18 @@ class AssetLoader(QObject):
 
     def cleanup(self):
         self.thumb_worker.stop()
+        self.wave_worker.stop()
+        self.proxy_worker.stop()
+        self.thread_pool.waitForDone(100)
+
+    def request_proxy(self, uid, path):
+        self.mw.logger.info(f"[ASSET] Requesting proxy for {uid}")
+        self.proxy_worker.add_task(path, uid)
+
+    def on_proxy_done(self, uid, proxy_path):
+        self.mw.logger.info(f"[ASSET] Proxy ready for {uid}: {proxy_path}")
+        for item in self.mw.timeline.scene.items():
+            if isinstance(item, ClipItem) and item.model.uid == uid:
+                item.model.proxy_path = proxy_path
+                item.update_cache()
+                item.update()

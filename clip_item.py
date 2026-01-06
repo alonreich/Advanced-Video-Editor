@@ -1,4 +1,4 @@
-﻿import time
+import time
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsDropShadowEffect
 from PyQt5.QtGui import QColor, QPixmap, QPainter, QFont, QPen
 from PyQt5.QtCore import Qt, QPointF
@@ -6,8 +6,9 @@ from model import ClipModel
 from clip_painter import ClipPainter
 
 class ClipItem(QGraphicsRectItem):
+
     def __init__(self, model: ClipModel, scale=50):
-        super().__init__(0, 0, model.duration * scale, 30)
+        super().__init__(0, 0, model.duration * scale, 40)
         self.model = model
         self.uid = model.uid
         self._last_render_time = 0
@@ -20,7 +21,7 @@ class ClipItem(QGraphicsRectItem):
         self.volume = model.volume
         self.scale = scale
         self.cached_pixmap = None
-        self.setPos(self.start * scale, self.track * 40 + 32)
+        self.setPos(self.start * scale, self.track * 40 + 30)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
@@ -38,16 +39,14 @@ class ClipItem(QGraphicsRectItem):
 
     def update_collision_cache(self):
         self.cached_collisions = []
-        if not self.scene(): 
-            return
+        if not self.scene(): return
         my_scene_rect = self.sceneBoundingRect()
         items = self.scene().items(my_scene_rect, Qt.IntersectsItemShape)
         is_my_type_video = getattr(self.model, 'media_type', 'video') == 'video'
         for item in items:
             if isinstance(item, ClipItem) and item != self and item.track > self.track:
                 is_their_type_video = getattr(item.model, 'media_type', 'video') == 'video'
-                if is_my_type_video != is_their_type_video: 
-                    continue
+                if is_my_type_video != is_their_type_video: continue
                 other_rect = item.sceneBoundingRect()
                 intersect = my_scene_rect.intersected(other_rect)
                 if not intersect.isEmpty():
@@ -66,8 +65,7 @@ class ClipItem(QGraphicsRectItem):
             return
         self._last_render_time = now
         rect = self.rect()
-        if rect.width() <= 0 or rect.height() <= 0: 
-            return
+        if rect.width() <= 0 or rect.height() <= 0: return
         self.cached_pixmap = QPixmap(int(rect.width()), int(rect.height()))
         self.cached_pixmap.fill(Qt.transparent)
         painter = QPainter(self.cached_pixmap)
@@ -78,12 +76,14 @@ class ClipItem(QGraphicsRectItem):
             ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
             ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
             ClipPainter.draw_fades(painter, rect, self.model, self.scale)
+            if getattr(self.model, 'proxy_path', None):
+                ClipPainter.draw_proxy_indicator(painter, rect)
         is_out_of_sync = False
         if self.model.linked_uid:
             for item in self.scene().items():
                 if isinstance(item, ClipItem) and item.uid == self.model.linked_uid:
                     if abs(item.model.start - self.model.start) > 0.001 or \
-                        abs(item.model.source_in - self.model.source_in) > 0.001:
+                       abs(item.model.source_in - self.model.source_in) > 0.001:
                         is_out_of_sync = True
                     break
         painter.setPen(QColor(255, 50, 50) if is_out_of_sync else Qt.white)
@@ -118,7 +118,7 @@ class ClipItem(QGraphicsRectItem):
         fi_x = self.model.fade_in * self.scale
         fo_x = rect.width() - (self.model.fade_out * self.scale)
         if (abs(pos.x() - fi_x) < 15 and abs(pos.y() - 6) < 15) or \
-            (abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15):
+           (abs(pos.x() - fo_x) < 15 and abs(pos.y() - 6) < 15):
             self.setCursor(Qt.PointingHandCursor)
         elif pos.x() < margin or pos.x() > rect.width() - margin:
             self.setCursor(Qt.SizeHorCursor)
@@ -177,8 +177,7 @@ class ClipItem(QGraphicsRectItem):
             diff_sec = diff / self.scale
             new_source_in = self.initial_source_in - diff_sec
             src_dur = getattr(self.model, 'source_duration', self.model.duration + 100)
-            if new_source_in < 0: 
-                new_source_in = 0
+            if new_source_in < 0: new_source_in = 0
             if new_source_in + self.model.duration > src_dur:
                 new_source_in = src_dur - self.model.duration
             self.model.source_in = new_source_in
@@ -220,7 +219,32 @@ class ClipItem(QGraphicsRectItem):
         else:
             old_pos = self.pos()
             super().mouseMoveEvent(event)
-            current_track = round((self.y() - 32) / 40)
+            if self.scene() and self.scene().views():
+                view = self.scene().views()[0]
+                t_idx = round((self.y() - 30) / 40)
+                snap_x = self.x()
+                neighbors = [i for i in self.scene().items() 
+                             if isinstance(i, ClipItem) and i != self and i.track == t_idx]
+                if neighbors:
+                    my_start, my_end = self.x(), self.x() + self.rect().width()
+                    min_dist = float('inf')
+                    for n in neighbors:
+                        n_start, n_end = n.x(), n.x() + n.rect().width()
+                        if abs(my_start - n_end) < min_dist:
+                            min_dist, snap_x = abs(my_start - n_end), n_end
+                        if abs(my_end - n_start) < min_dist:
+                            min_dist, snap_x = abs(my_end - n_start), n_start - self.rect().width()
+                        if abs(my_start - n_start) < min_dist:
+                            min_dist, snap_x = abs(my_start - n_start), n_start
+                        if abs(my_end - n_end) < min_dist:
+                            min_dist, snap_x = abs(my_end - n_end), n_end - self.rect().width()
+                if view.snap_line: view.scene.removeItem(view.snap_line)
+                if neighbors and min_dist < 20:
+                    view.snap_line = view.scene.addLine(snap_x, 0, snap_x, view.scene.height(), QPen(Qt.cyan, 1))
+                    view.snap_line.setZValue(100)
+                else:
+                    view.snap_line = None
+            current_track = round((self.y() - 30) / 40)
             my_width = self.rect().width()
             for other in self.scene().items():
                 if isinstance(other, ClipItem) and other != self and other.track == current_track:
@@ -243,21 +267,38 @@ class ClipItem(QGraphicsRectItem):
     def mouseReleaseEvent(self, event):
         self._is_interacting = False
         super().mouseReleaseEvent(event)
-        if self.x() < 10: 
-            self.setX(0)
-        current_track_idx = round((self.y() - 35) / 40)
-        if current_track_idx < 0: 
-            current_track_idx = 0
-        snapped_y = current_track_idx * 40 + 35
+        if self.x() < 10: self.setX(0)
+        current_track_idx = round((self.y() - 30) / 40)
+        if current_track_idx < 0: current_track_idx = 0
+        snapped_y = current_track_idx * 40 + 30
         self.setY(snapped_y)
         self.track = current_track_idx
         if self.scene():
+            neighbors = [i for i in self.scene().items() 
+                         if isinstance(i, ClipItem) and i != self and i.track == self.track]
+            if neighbors:
+                my_start = self.x()
+                my_end = self.x() + self.rect().width()
+                min_dist = float('inf')
+                best_snap = my_start
+                for n in neighbors:
+                    n_start, n_end = n.x(), n.x() + n.rect().width()
+                    if abs(my_start - n_end) < min_dist:
+                        min_dist, best_snap = abs(my_start - n_end), n_end
+                    if abs(my_end - n_start) < min_dist:
+                        min_dist, best_snap = abs(my_end - n_start), n_start - self.rect().width()
+                    if abs(my_start - n_start) < min_dist:
+                        min_dist, best_snap = abs(my_start - n_start), n_start
+                    if abs(my_end - n_end) < min_dist:
+                        min_dist, best_snap = abs(my_end - n_end), n_end - self.rect().width()
+                if min_dist < 20:
+                    self.setX(best_snap)
             safe = False
             iterations = 0
             while not safe and iterations < 10:
                 collisions = [i for i in self.scene().items() 
-                    if isinstance(i, ClipItem) and i != self 
-                    and i.track == self.track and i.collidesWithItem(self)]
+                              if isinstance(i, ClipItem) and i != self 
+                              and i.track == self.track and i.collidesWithItem(self)]
                 if not collisions:
                     safe = True
                 else:
@@ -280,6 +321,7 @@ class ClipItem(QGraphicsRectItem):
                 if isinstance(item, ClipItem) and item.uid == self.model.linked_uid:
                     item.start = item.x() / item.scale
                     item.model.start = item.start
+                    item.setY(item.model.track * 40 + 30)
                     item.update_cache()
                     break
         if self.scene() and self.scene().views():
@@ -287,9 +329,10 @@ class ClipItem(QGraphicsRectItem):
             if view.snap_line:
                 view.scene.removeItem(view.snap_line)
                 view.snap_line = None
-            view.fit_to_view()
+            if self.track >= view.num_tracks - 1:
+                view.check_auto_expand()
             view.compact_lanes()
-        self.update_cache()
+            self.update_cache()
         self.update_collision_cache()
 
     def cleanup(self):
@@ -311,12 +354,12 @@ class ClipItem(QGraphicsRectItem):
         """Right-click menu for track linking and separation."""
         from PyQt5.QtWidgets import QMenu
         menu = QMenu()
-        link_action = None
         if self.model.linked_uid:
             link_action = menu.addAction("🔗 Unlink from Partner")
+            action = menu.exec_(event.screenPos())
+            if action == link_action:
+                self.scene().views()[0].parent().mw.clip_ctrl.toggle_link(self.model.uid)
         else:
             link_action = menu.addAction("🔗 Link to Nearby Clip")
             link_action.setEnabled(False)
-        action = menu.exec_(event.screenPos())
-        if action == link_action and self.model.linked_uid:
-            self.scene().views()[0].parent().mw.clip_ctrl.toggle_link(self.model.uid)
+            menu.exec_(event.screenPos())

@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit, QProgressBar, QPushButton, QFileDialog
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QTextEdit, QProgressBar, QPushButton, QFileDialog
 from render_worker import RenderWorker
 
 class ExportDialog(QDialog):
@@ -15,6 +15,10 @@ class ExportDialog(QDialog):
         self.setWindowTitle("Export Video")
         self.resize(500, 400)
         l = QVBoxLayout(self)
+        est_text = self.calculate_estimate()
+        self.lbl_estimate = QLabel(est_text)
+        self.lbl_estimate.setStyleSheet("font-size: 13px; font-weight: bold; color: #4A90E2; padding: 5px;")
+        l.addWidget(self.lbl_estimate)
         self.console = QTextEdit()
         self.console.setReadOnly(True)
         l.addWidget(self.console)
@@ -23,6 +27,25 @@ class ExportDialog(QDialog):
         btn = QPushButton("Start Export")
         btn.clicked.connect(self.start_export)
         l.addWidget(btn)
+
+    def calculate_estimate(self):
+        """Calculates rough file size based on duration and target bitrate."""
+        if not self.state:
+            return "Duration: 0s | Est. File Size: 0 MB"
+        max_duration = 0.0
+        for clip in self.state:
+            end = clip.get('start', 0.0) + clip.get('dur', 0.0)
+            if end > max_duration:
+                max_duration = end
+        video_kbps = 8000
+        if "1440" in self.res_mode: video_kbps = 16000
+        elif "2160" in self.res_mode or "3840" in self.res_mode: video_kbps = 45000
+        elif "720" in self.res_mode: video_kbps = 4000
+        total_kbps = video_kbps + 192
+        size_mb = (total_kbps * max_duration) / 8192
+        mins = int(max_duration // 60)
+        secs = int(max_duration % 60)
+        return f"Duration: {mins:02}:{secs:02} | Target: {self.res_mode} | Est. Size: ~{size_mb:.1f} MB"
 
     def log(self, t):
         self.console.append(t)

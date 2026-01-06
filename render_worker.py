@@ -1,4 +1,4 @@
-﻿import traceback
+import traceback
 import logging
 import subprocess
 import shutil
@@ -21,27 +21,6 @@ class RenderWorker(QThread):
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.process = None
 
-    def get_gpu_encoder(self):
-        """Detects the best available hardware encoder."""
-        try:
-            ffmpeg_bin = BinaryManager.get_executable('ffmpeg')
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            output = subprocess.check_output([ffmpeg_bin, '-encoders'], startupinfo=si, stderr=subprocess.STDOUT).decode()
-            if 'h264_nvenc' in output:
-                self.logger.info("[RENDER] NVIDIA GPU detected. Using h264_nvenc.")
-                return 'h264_nvenc'
-            if 'h264_qsv' in output:
-                self.logger.info("[RENDER] Intel QuickSync detected. Using h264_qsv.")
-                return 'h264_qsv'
-            if 'h264_amf' in output:
-                self.logger.info("[RENDER] AMD GPU detected. Using h264_amf.")
-                return 'h264_amf'
-        except Exception as e:
-            self.logger.warning(f"[RENDER] HW detection failed: {e}")
-        self.logger.warning("[RENDER] No GPU encoder found. Falling back to libx264.")
-        return 'libx264'
-
     def run(self):
         try:
             w, h = (1080, 1920) if "Portrait" in self.res else (1920, 1080)
@@ -49,14 +28,20 @@ class RenderWorker(QThread):
             elif "3840" in self.res: w, h = 3840, 2160
             gen = FilterGraphGenerator(self.clips, w, h, self.vols, self.mutes)
             inputs, f_str, v_map, a_map = gen.build(is_export=True)
-            gpu_codec = self.get_gpu_encoder()
+            gpu_codec = BinaryManager.get_best_encoder(self.logger)
             cmd = [BinaryManager.get_executable('ffmpeg'), '-y', '-hide_banner']
             for inp in inputs:
                 cmd.extend(['-i', inp])
             cmd.extend(['-filter_complex', f_str])
             cmd.extend(['-map', v_map, '-map', a_map])
             if gpu_codec != 'libx264':
-                cmd.extend(['-c:v', gpu_codec, '-pix_fmt', 'yuv420p', '-preset', 'p4', '-rc', 'vbr', '-cq', '23'])
+                is_modern = gpu_codec in ['av1_nvenc', 'hevc_nvenc']
+                preset = 'p7' if is_modern else 'p4'
+                cq_value = '20' if gpu_codec == 'av1_nvenc' else ('19' if gpu_codec == 'hevc_nvenc' else '23')
+                cmd.extend(['-c:v', gpu_codec, '-pix_fmt', 'p010le' if is_modern else 'yuv420p'])
+                cmd.extend(['-preset', preset, '-rc', 'vbr', '-cq', cq_value, '-b:v', '0'])
+                if gpu_codec == 'hevc_nvenc':
+                    cmd.extend(['-spatial-aq', '1', '-temporal-aq', '1'])
             else:
                 cmd.extend(['-c:v', 'libx264', '-preset', 'fast', '-crf', '23'])
             cmd.extend(['-c:a', 'aac', '-b:a', '192k'])

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import logging
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt
@@ -10,7 +10,6 @@ class MPVPlayer(QWidget):
         self.setAttribute(Qt.WA_DontCreateNativeAncestors)
         self.setAttribute(Qt.WA_NativeWindow)
         BinaryManager.ensure_env()
-
         import mpv
         self.logger = logging.getLogger("Advanced_Video_Editor")
         if not self.winId(): self.createWinId()

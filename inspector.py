@@ -1,5 +1,5 @@
-﻿from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
-    QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox, QCheckBox, QProgressBar, QPushButton)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
+    QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox, QCheckBox, QProgressBar, QPushButton, QSizePolicy)
 from PyQt5.QtCore import pyqtSignal, Qt
 
 class InspectorWidget(QWidget):
@@ -9,7 +9,7 @@ class InspectorWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedWidth(250)
+        self.setMinimumWidth(250)
         self.setStyleSheet("""
             QWidget { background-color: #2E2E2E; color: #E0E0E0; font-family: 'Segoe UI'; }
             QGroupBox { border: 1px solid #444; border-radius: 4px; margin-top: 20px; font-weight: bold; }

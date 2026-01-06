@@ -1,10 +1,9 @@
-﻿import os
+import os
 import logging
 from enum import Enum
 from PyQt5.QtWidgets import QGraphicsView, QMenu
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF
 from PyQt5.QtGui import QPainter
-
 from timeline_scene import TimelineScene
 from clip_item import ClipItem
 from model import ClipModel
@@ -49,17 +48,31 @@ class TimelineView(QGraphicsView):
         self.scene.selectionChanged.connect(self.on_selection_change)
         self.painter_helper = TimelineGridPainter(self.ruler_height)
         self.ops = TimelineOperations(self)
-    def get_snapped_x(self, x, **kwargs): return self.ops.get_snapped_x(x, **kwargs)
-    def compact_lanes(self): self.ops.compact_lanes()
-    def reorder_tracks(self, s, t): self.ops.reorder_tracks(s, t)
-    def move_clip(self, uid, pos): self.ops.move_clip(uid, pos)
-    def set_clip_param(self, uid, p, v): self.ops.set_clip_param(uid, p, v)
-    def update_clip_proxy_path(self, s, p): self.ops.update_clip_proxy_path(s, p)
+
+    def get_snapped_x(self, x, **kwargs):
+        return self.ops.get_snapped_x(x, **kwargs)
+
+    def compact_lanes(self):
+        self.ops.compact_lanes()
+
+    def reorder_tracks(self, s, t):
+        self.ops.reorder_tracks(s, t)
+
+    def move_clip(self, uid, pos):
+        self.ops.move_clip(uid, pos)
+
+    def set_clip_param(self, uid, p, v):
+        self.ops.set_clip_param(uid, p, v)
+
+    def update_clip_proxy_path(self, s, p):
+        self.ops.update_clip_proxy_path(s, p)
+
     def drawForeground(self, painter, rect):
         vp_info = {'font': self.font()}
         self.painter_helper.draw_foreground(painter, rect, self.scale_factor, vp_info, self.playhead_pos)
         if self.mode == Mode.RAZOR and hasattr(self, 'razor_mouse_x'):
             self.painter_helper.draw_razor_indicator(painter, rect, self.razor_mouse_x)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Left:
             delta = -3.0 if event.modifiers() & Qt.ControlModifier else -1.0
@@ -69,13 +82,17 @@ class TimelineView(QGraphicsView):
             delta = 3.0 if event.modifiers() & Qt.ControlModifier else 1.0
             self.seek_request.emit(delta)
             event.accept()
+        elif event.key() == Qt.Key_Delete:
+            if self.mw:
+                self.mw.clip_ctrl.delete_current()
+            event.accept()
         elif event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_K:
             item = self.get_selected_item()
             if item: self.clip_split_requested.emit(item, self.playhead_pos)
             event.accept()
         elif event.key() == Qt.Key_BracketLeft:
             item = self.get_selected_item()
-            if item and self.playhead_pos > item.model.start: 
+            if item and self.playhead_pos > item.model.start:
                 self.mw.save_state_for_undo()
                 diff = self.playhead_pos - item.model.start
                 item.model.duration = max(0.1, item.model.duration - diff)
@@ -146,58 +163,31 @@ class TimelineView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.is_dragging_clip:
-            item = self.get_selected_item()
-            if not item: return
-            delta = event.pos() - self.drag_start_pos
-            new_pos = self.drag_start_item_pos + delta
-            current_track = round(new_pos.y() / self.track_height)
-            snapped_x = self.get_snapped_x(new_pos.x(), track_idx=current_track, ignore_item=item)
-            new_y = current_track * self.track_height
-            item.setPos(snapped_x, new_y)
-            self.viewport().update() 
-            return
         if self.is_dragging_playhead:
             self.user_set_playhead(self.mapToScene(event.pos()).x())
         elif self.mode == Mode.RAZOR:
             self.razor_mouse_x = self.mapToScene(event.pos()).x()
             self.viewport().update()
-            super().mouseMoveEvent(event)
-        else:
-            super().mouseMoveEvent(event)
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if self.is_dragging_clip:
             self.is_dragging_clip = False
-            item = self.get_selected_item()
-            if item:
-                old_start = item.model.start
-                new_start = item.x() / self.scale_factor
-                new_track = round(item.y() / self.track_height)
-                diff = new_start - old_start
-                for other in self.scene.items():
-                    if isinstance(other, ClipItem) and other != item and other.track == new_track:
-                        if other.model.start > old_start:
-                            other.model.start += diff
-                            other.setX(other.model.start * self.scale_factor)
-                self.ops.move_clip(item.uid, (new_start, new_track))
-            if new_track >= self.num_tracks - 1:
-                self.check_auto_expand()
-            self.compact_lanes()
             self.interaction_ended.emit()
         if self.is_dragging_playhead:
             self.is_dragging_playhead = False
             self.interaction_ended.emit()
         super().mouseReleaseEvent(event)
-        if self.scene.selectedItems(): self.data_changed.emit()
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
         if isinstance(item, ClipItem):
+            self.scene.clearSelection()
+            item.setSelected(True)
             menu = QMenu(self)
             if item.model.media_type == 'video':
                 menu.addAction("Split Audio & Video").triggered.connect(lambda: self.ops.split_audio_video(item))
-                menu.addAction("Crop").triggered.connect(self.mw.toggle_crop_mode)
+                menu.addAction("Crop").triggered.connect(lambda: self.mw.toggle_crop_mode(True))
             menu.addSeparator()
             menu.addAction("Delete").triggered.connect(self.remove_selected_clips)
             menu.exec_(event.globalPos())
@@ -231,8 +221,10 @@ class TimelineView(QGraphicsView):
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
-    def set_mode(self, mode): self.mode = mode
-    
+
+    def set_mode(self, mode):
+        self.mode = mode
+
     def toggle_snapping(self, enabled):
         self.snapping_enabled = enabled
         if not enabled and self.snap_line:
@@ -248,24 +240,37 @@ class TimelineView(QGraphicsView):
         self.update_clip_positions()
 
     def update_clip_positions(self):
+        """Goal 18: Enforces strict vertical alignment with track headers."""
         for item in self.scene.items():
             if isinstance(item, ClipItem):
                 item.scale = self.scale_factor
-                item.setPos(item.model.start * self.scale_factor, item.model.track * self.track_height)
+                item.setPos(item.model.start * self.scale_factor, item.model.track * self.track_height + 30)
                 item.setRect(0, 0, item.model.duration * self.scale_factor, 30)
-        self.scene.update()
 
     def user_set_playhead(self, x):
         self.set_time(max(0, x / self.scale_factor))
-        
+
     def set_time(self, sec):
         self.playhead_pos = sec
         self.time_updated.emit(sec)
-        self.scene.update()
+        self.viewport().update()
         px = sec * self.scale_factor
         val = self.horizontalScrollBar().value()
-        if px > val + self.viewport().width() - 50: self.horizontalScrollBar().setValue(int(px - 100))
-        elif px < val: self.horizontalScrollBar().setValue(int(px - 100))
+        if px > val + self.viewport().width() - 50:
+            self.horizontalScrollBar().setValue(int(px - 100))
+        elif px < val:
+            self.horizontalScrollBar().setValue(int(px - 100))
+
+    def set_visual_time(self, sec):
+        """Updates playhead without emitting time_updated to prevent player seek loops."""
+        self.playhead_pos = sec
+        self.viewport().update()
+        px = sec * self.scale_factor
+        val = self.horizontalScrollBar().value()
+        if px > val + self.viewport().width() - 50:
+            self.horizontalScrollBar().setValue(int(px - 100))
+        elif px < val:
+            self.horizontalScrollBar().setValue(int(px - 100))
 
     def fit_to_view(self):
         items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
@@ -274,20 +279,18 @@ class TimelineView(QGraphicsView):
         start = min(i.model.start for i in items)
         end = max(i.model.start + i.model.duration for i in items)
         dur = end - start
-        self.logger.info(f"fit_to_view: start={start}, end={end}, dur={dur}, viewport_width={self.viewport().width()}")
         if dur > 0 and self.viewport().width() > 100:
             self.scale_factor = (self.viewport().width() - 100) / dur
-            self.logger.info(f"fit_to_view: new scale_factor={self.scale_factor}")
             self.update_clip_positions()
             self.horizontalScrollBar().setValue(int(start * self.scale_factor))
 
     def add_clip(self, clip_data):
         model = clip_data if isinstance(clip_data, ClipModel) else ClipModel.from_dict(clip_data)
         item = ClipItem(model, self.scale_factor)
-        item.setPos(model.start * self.scale_factor, model.track * self.track_height)
+        item.setPos(model.start * self.scale_factor, model.track * self.track_height + 30)
         self.scene.addItem(item)
         return item
-        
+
     def add_track_to_scene(self):
         self.set_num_tracks(self.num_tracks + 1)
 
@@ -300,13 +303,11 @@ class TimelineView(QGraphicsView):
 
     def load_state(self, state):
         self.logger.info(f"Loading timeline state with {len(state)} clips.")
-        self.logger.debug(f"State data: {state}")
         self.scene.clear()
         for c in state:
             self.add_clip(c)
-        self.logger.info(f"Scene has {len(self.scene.items())} items after loading.")
         self.fit_to_view()
-        self.scene.update()
+        self.viewport().update()
 
     def get_selected_item(self):
         sel = self.scene.selectedItems()
@@ -316,18 +317,17 @@ class TimelineView(QGraphicsView):
         return self.scene.selectedItems()
 
     def remove_selected_clips(self):
-        for item in self.scene.selectedItems(): self.scene.removeItem(item)
+        for item in self.scene.selectedItems():
+            self.scene.removeItem(item)
         self.compact_lanes()
-    
+
     def remove_clip(self, uid):
         self.ops.remove_clip(uid)
 
     def on_selection_change(self):
-        self.logger.info("on_selection_change called")
         try:
             scene = getattr(self, "scene", None)
-            if scene is None:
-                return
+            if scene is None: return
             sel = scene.selectedItems()
         except RuntimeError:
             return
@@ -341,9 +341,7 @@ class TimelineView(QGraphicsView):
     def check_auto_expand(self):
         """Goal 4: Automatically create lane N only when lane N-1 is occupied."""
         items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
-        if not items:
-            return
+        if not items: return
         max_occupied_track = max(i.track for i in items)
         if max_occupied_track >= self.num_tracks - 2:
-            self.logger.info(f"[TIMELINE] Auto-expanding: Track {max_occupied_track} occupied.")
             self.mw.timeline.add_track()

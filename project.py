@@ -1,4 +1,4 @@
-﻿import os
+import os
 import shutil
 import json
 import uuid
@@ -18,6 +18,8 @@ class ProjectManager:
     def ensure_structure(self):
         """Initializes the project directory structure."""
         os.makedirs(self.projects_root, exist_ok=True)
+        if self.current_project_dir:
+            os.makedirs(os.path.join(self.current_project_dir, "voiceover"), exist_ok=True)
         self.enforce_fifo_limit()
 
     def enforce_fifo_limit(self):
@@ -221,3 +223,13 @@ class ProjectManager:
             json.dump(data, f, indent=4)
         self.logger.info(f"Saved Project As: {new_name} ({new_id})")
         return new_proj_dir
+
+    def get_voiceover_target(self):
+        """Generates a unique path for a new voiceover file."""
+        if not self.current_project_dir:
+            self.create_project()
+        vo_dir = os.path.join(self.current_project_dir, "voiceover")
+        os.makedirs(vo_dir, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"VO_{timestamp}.wav"
+        return os.path.join(vo_dir, filename)

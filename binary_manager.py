@@ -1,11 +1,15 @@
-﻿import os
+import os
 import shutil
 import logging
+import subprocess
 
 class BinaryManager:
+    _cached_encoder = None
+
     @staticmethod
     def get_bin_path():
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "binaries")
+
     @staticmethod
     def ensure_env():
         bin_dir = BinaryManager.get_bin_path()
@@ -31,6 +35,42 @@ class BinaryManager:
         else:
             logger.warning("[BINARY] Local libvlc.dll not found in binaries folder.")
         BinaryManager.verify_vlc_plugins(bin_dir, logger)
+
+    @staticmethod
+    def get_best_encoder(logger=None):
+        """Goal 20: Centralized, cached GPU detection."""
+        if BinaryManager._cached_encoder: 
+            return BinaryManager._cached_encoder
+        if not logger:
+            logger = logging.getLogger("Advanced_Video_Editor")
+        try:
+            ffmpeg_bin = BinaryManager.get_executable('ffmpeg')
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            output = subprocess.check_output([ffmpeg_bin, '-encoders'], startupinfo=si, stderr=subprocess.STDOUT).decode()
+            if 'av1_nvenc' in output:
+                logger.info("[RENDER] NVIDIA 40-Series detected. Using AV1_NVENC.")
+                BinaryManager._cached_encoder = 'av1_nvenc'
+            elif 'hevc_nvenc' in output:
+                logger.info("[RENDER] NVIDIA GPU detected. Using HEVC_NVENC.")
+                BinaryManager._cached_encoder = 'hevc_nvenc'
+            elif 'h264_nvenc' in output:
+                logger.info("[RENDER] NVIDIA GPU detected. Using H264_NVENC.")
+                BinaryManager._cached_encoder = 'h264_nvenc'
+            elif 'h264_qsv' in output:
+                logger.info("[RENDER] Intel QuickSync detected. Using H264_QSV.")
+                BinaryManager._cached_encoder = 'h264_qsv'
+            elif 'h264_amf' in output:
+                logger.info("[RENDER] AMD GPU detected. Using H264_AMF.")
+                BinaryManager._cached_encoder = 'h264_amf'
+            else:
+                logger.warning("[RENDER] No GPU encoder found. Falling back to libx264.")
+                BinaryManager._cached_encoder = 'libx264'
+        except Exception as e:
+            logger.warning(f"[RENDER] HW detection failed: {e}")
+            BinaryManager._cached_encoder = 'libx264'
+        return BinaryManager._cached_encoder
+
     @staticmethod
     def purge_vlc_cache(bin_dir, logger):
         """Nukes stale plugin-registry to prevent 'ghost' DLL errors."""
@@ -41,6 +81,7 @@ class BinaryManager:
                 logger.info("[BINARY] Stale VLC plugin cache purged.")
             except Exception as e:
                 logger.error(f"[BINARY] Failed to purge VLC cache: {e}")
+
     @staticmethod
     def verify_vlc_plugins(bin_dir, logger):
         """Goal 17: Ensures all 200+ VLC plugins are present and readable to prevent 'silent' playback failure."""
@@ -67,6 +108,7 @@ class BinaryManager:
         else:
             logger.info(f"[BINARY] Integrity Check: {plugin_count} VLC plugins verified.")
         return len(failed_reads) == 0
+
     @staticmethod
     def _is_64bit(filepath):
         """Dumps the PE header to ensure we aren't loading 32-bit garbage into a 64-bit process."""
@@ -79,6 +121,7 @@ class BinaryManager:
                 return machine == 0x8664
         except Exception:
             return False
+
     @staticmethod
     def get_executable(name):
         if os.name == 'nt' and not name.lower().endswith('.exe'): name += ".exe"

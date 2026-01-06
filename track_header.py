@@ -1,4 +1,4 @@
-﻿from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QSlider
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QDrag
 
@@ -73,6 +73,15 @@ class TrackHeaders(QWidget):
     def update_track_indices(self):
         for i, widget in enumerate(self.headers):
             widget.track_idx = i
+
+    def clear_all_headers(self):
+        """Properly nukes all track widgets and resets the list."""
+        while self.main_layout.count() > 0:
+            item = self.main_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self.headers = []
+        self.main_layout.addStretch()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():

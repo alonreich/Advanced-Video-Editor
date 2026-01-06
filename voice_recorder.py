@@ -1,4 +1,4 @@
-﻿import pyaudio
+import pyaudio
 import wave
 import audioop
 from PyQt5.QtCore import QThread, pyqtSignal

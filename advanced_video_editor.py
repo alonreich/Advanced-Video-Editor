@@ -1,13 +1,11 @@
-﻿import sys
+import sys
 import os
 import logging
 import traceback
 import ctypes
 from ctypes.wintypes import HWND, UINT, DWORD
-
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
-
 from system import setup_system, StreamToLogger
 from binary_manager import BinaryManager
 
@@ -65,7 +63,6 @@ if __name__ == "__main__":
     logger.info("Creating QApplication...")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-
     from PyQt5.QtGui import QPalette, QColor
     p = app.palette()
     p.setColor(QPalette.Window, QColor(53, 53, 53))

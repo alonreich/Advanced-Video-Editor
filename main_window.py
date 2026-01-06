@@ -1,8 +1,10 @@
-﻿import os
+import os
 import logging
 import json
 import time
-from PyQt5.QtWidgets import QMainWindow, QDockWidget, QAction, QToolButton, QMenu, QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, QActionGroup, QDesktopWidget, QSplitter
+from PyQt5.QtWidgets import (QMainWindow, QDockWidget, QAction, QToolButton, QMenu, 
+                             QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, 
+                             QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem)
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QByteArray
 from project_controller import ProjectController
@@ -11,16 +13,15 @@ from asset_loader import AssetLoader
 from binary_manager import BinaryManager
 from system import ConfigManager
 from project import ProjectManager
-from player import MPVPlayer
+from playback_manager import PlaybackManager
+from history import UndoStack
+from recorder import VoiceoverRecorder
+from player_vlc import VLCPlayer
 from timeline_container import TimelineContainer
 from preview import PreviewWidget
 from inspector import InspectorWidget
-from history import UndoStack
 from media_pool import MediaPoolWidget
-from playback_manager import PlaybackManager
-from timeline_view import Mode
 from export_dialog import ExportDialog
-
 from custom_title_bar import CustomTitleBar
 
 class MainWindow(QMainWindow):
@@ -39,8 +40,11 @@ class MainWindow(QMainWindow):
         self.undo_lock = False
         self.track_volumes = {}
         self.track_mutes = {}
-        from player_vlc import VLCPlayer 
         self.player_node = VLCPlayer()
+        self.recorder = VoiceoverRecorder()
+        self.recorder.recording_started.connect(self.on_recording_started)
+        self.recorder.recording_finished.connect(self.on_recording_finished)
+        self.recording_start_time = 0.0
         self.setup_ui()
         self.initial_layout_state = self.saveState()
         self.initial_geometry = self.saveGeometry()
@@ -58,7 +62,8 @@ class MainWindow(QMainWindow):
     def finalize_setup(self):
         self.preview.set_player(self.player_node)
         self.playback = PlaybackManager(self.player_node, self.timeline, self.inspector)
-        self.playback.playhead_updated.connect(self.timeline.set_time)
+        self.playback.playhead_updated.connect(self.timeline.set_visual_time)
+        self.timeline.time_updated.connect(self.player_node.seek)
         self.playback.state_changed.connect(lambda p: None)
         self.timeline.data_changed.connect(self.mark_dirty)
         self.timeline.file_dropped.connect(self.asset_loader.handle_drop)
@@ -80,8 +85,10 @@ class MainWindow(QMainWindow):
         if "2560" in res_text: w, h = 2560, 1440
         elif "3840" in res_text: w, h = 3840, 2160
         self.preview.set_mode(w, h, res_text)
+        self.playback.set_resolution(w, h)
         self.playback.mark_dirty(serious=True)
         self.logger.info(f"Project switched to {res_text} ({w}x{h})")
+        self.is_dirty = True
 
     def setup_ui(self):
         self.setAcceptDrops(True)
@@ -110,7 +117,7 @@ class MainWindow(QMainWindow):
         self.dock_timeline.setObjectName("TimelineDock")
         self.timeline = TimelineContainer(main_window=self)
         self.dock_timeline.setWidget(self.timeline)
-        self.dock_timeline.setMinimumHeight(180)
+        self.dock_timeline.setMinimumHeight(150)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_timeline)
         timeline_title_bar = CustomTitleBar("Timeline")
         self.dock_timeline.setTitleBarWidget(timeline_title_bar)
@@ -134,19 +141,16 @@ class MainWindow(QMainWindow):
         self.dock_pool.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.dock_insp.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.dock_timeline.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
-        self.resizeDocks([self.dock_pool, self.dock_insp], [170, 250], Qt.Horizontal)
+        self.dock_pool.widget().setMinimumWidth(100)
+        self.dock_insp.widget().setMinimumWidth(250)
+        self.resizeDocks([self.dock_pool, self.dock_insp], [228, 250], Qt.Horizontal)
+        self.resizeDocks([self.dock_timeline], [180], Qt.Vertical)
         self.setup_toolbar()
-        if g := self.config.get("geometry"): self.restoreGeometry(QByteArray.fromHex(g.encode()))
-        if s := self.config.get("state"): self.restoreState(QByteArray.fromHex(s.encode()))
+        if g := self.config.get("geometry"): 
+            self.restoreGeometry(QByteArray.fromHex(g.encode()))
+        if s := self.config.get("state"): 
+            self.restoreState(QByteArray.fromHex(s.encode()))
         self.resizeEvent = lambda event: self.setWindowTitle(f"Advanced Video Editor ({event.size().width()}x{event.size().height()})")
-
-    def closeEvent(self, e):
-        self.asset_loader.cleanup()
-        self.config.set("geometry", self.saveGeometry().toHex().data().decode())
-        self.config.set("state", self.saveState().toHex().data().decode())
-        self.config.set("inspector_width", self.dock_insp.width())
-        self.config.set("media_pool_width", self.dock_pool.width())
-        super().closeEvent(e)
 
     def setup_toolbar(self):
         tb = self.addToolBar("Main")
@@ -156,7 +160,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction("Export", self.open_export)
         tb.addSeparator()
-        tb.addAction("Undo", self.undo)
+        tb.addAction("Undo", self.undo_action)
         tb.addAction("Split", lambda: self.clip_ctrl.split_current())
         tb.addAction("Delete", lambda: self.clip_ctrl.delete_current())
         self.act_snap = tb.addAction("🧲")
@@ -216,35 +220,37 @@ class MainWindow(QMainWindow):
         self.preview.overlay.toggle_crop_mode()
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_C:
-            self.toggle_voiceover()
-        else:
+        if event.isAutoRepeat():
             super().keyPressEvent(event)
-
-    def toggle_voiceover(self):
-        """Starts or stops the live voiceover recording."""
-        if hasattr(self, 'voice_worker') and self.voice_worker.isRunning():
-            self.voice_worker.stop()
-            self.preview.overlay.is_recording = False
-            self.preview.overlay.update()
-            self.logger.info("[VOICEOVER] Recording stopped.")
             return
-        vo_dir = os.path.join(self.pm.current_project_dir, "voiceover")
-        os.makedirs(vo_dir, exist_ok=True)
-        filepath = os.path.join(vo_dir, f"vo_{int(time.time())}.wav")
-        self.voice_worker = VoiceWorker(filepath)
-        self.voice_worker.level_signal.connect(self.inspector.mic_meter.setValue)
-        self.voice_worker.finished.connect(self.on_voiceover_finished)
-        self.logger.info(f"[VOICEOVER] Recording started: {filepath}")
-        self.preview.overlay.is_recording = True
-        self.preview.overlay.update()
-        self.voice_worker.start()
+        if event.key() == Qt.Key_C:
+            if not self.recorder.is_recording:
+                path = self.pm.get_voiceover_target()
+                self.player_node.pause()
+                self.recording_start_time = self.timeline.playhead_pos
+                self.recorder.start_recording(path)
+            else:
+                self.recorder.stop_recording()
+            event.accept()
+            return
+        if event.modifiers() & Qt.ControlModifier:
+            if event.key() == Qt.Key_Z:
+                self.undo_action()
+            elif event.key() == Qt.Key_Y:
+                self.redo_action()
+        super().keyPressEvent(event)
 
-    def on_voiceover_finished(self, path):
-        """Automatically drops the new recording onto the timeline at the playhead."""
-        vo_track = len(self.timeline.track_headers.headers)
-        self.timeline.add_track()
-        self.asset_loader.handle_drop(path, vo_track, self.timeline.playhead_pos)
+    def on_recording_started(self):
+        self.statusBar().showMessage("🔴 RECORDING VOICEOVER... (Press 'C' to Stop)")
+        self.timeline.setFocus()
+
+    def on_recording_finished(self, path):
+        self.statusBar().showMessage(f"Voiceover saved: {os.path.basename(path)}", 5000)
+        item = QListWidgetItem(os.path.basename(path))
+        item.setData(Qt.UserRole, path)
+        self.media_pool.addItem(item)
+        if hasattr(self, 'asset_loader'):
+            self.asset_loader.handle_drop(path, -1, self.recording_start_time)
 
     def reset_layout(self):
         if QMessageBox.question(self, 'Reset Layout', "Reset UI layout to default?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
@@ -253,9 +259,11 @@ class MainWindow(QMainWindow):
             self.config.set("geometry", self.initial_geometry.toHex().data().decode())
             self.config.set("state", self.initial_layout_state.toHex().data().decode())
 
-    def import_media(self): self.asset_loader.import_dialog()
+    def import_media(self): 
+        self.asset_loader.import_dialog()
 
-    def import_music(self): self.asset_loader.import_dialog(music_only=True)
+    def import_music(self): 
+        self.asset_loader.import_dialog(music_only=True)
 
     def open_export(self):
         dlg = ExportDialog(self.timeline.get_state(), self.track_volumes, self.track_mutes, self.inspector.combo_res.currentText(), self)
@@ -264,14 +272,22 @@ class MainWindow(QMainWindow):
     def toggle_play(self):
         self.playback.toggle_play(self.act_proxy.isChecked(), self.track_volumes, self.track_mutes)
 
-    def mark_dirty(self): self.is_dirty = True
+    def mark_dirty(self): 
+        self.is_dirty = True
 
     def save_state_for_undo(self):
         self.history.push(self.timeline.get_state())
         self.mark_dirty()
 
-    def undo(self):
-        if s := self.history.undo(None): self.timeline.load_state(s)
+    def undo_action(self):
+        if s := self.history.undo(None): 
+            self.timeline.load_state(s)
+
+    def redo_action(self):
+        if s := self.history.redo(None):
+            self.timeline.load_state(s)
+
+    def undo_lock_acquire(self):
         """Captures initial state before interaction begins."""
         self._pre_interaction_state = self.timeline.get_state()
         self.undo_lock = True
@@ -289,33 +305,30 @@ class MainWindow(QMainWindow):
         self.preview.overlay.set_selected_clip(item.model if item else None)
 
     def dragEnterEvent(self, event):
-        self.logger.info("MainWindow dragEnterEvent")
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        self.logger.info("MainWindow dragMoveEvent")
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
 
     def dropEvent(self, event):
-        self.logger.info("MainWindow dropEvent")
         super().dropEvent(event)
 
     def closeEvent(self, e):
         self.asset_loader.cleanup()
-        self.logger.info(f"closeEvent triggered. Items in scene: {len(self.timeline.timeline_view.scene.items())}")
+        self.logger.info(f"closeEvent triggered.")
         timeline_state = self.timeline.get_state()
-        self.logger.info(f"Saving project on exit. Timeline has {len(timeline_state)} items.")
         ui = {
             "playhead": self.timeline.playhead_pos,
             "zoom": self.timeline.scale_factor,
             "scroll_x": self.timeline.horizontalScrollBar().value(),
-            "scroll_y": self.timeline.verticalScrollBar().value()
+            "scroll_y": self.timeline.verticalScrollBar().value(),
+            "resolution": self.inspector.combo_res.currentText()
         }
         self.proj_ctrl.pm.save_state(timeline_state, ui, is_autosave=False)
         self.config.set("geometry", self.saveGeometry().toHex().data().decode())

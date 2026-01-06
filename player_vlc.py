@@ -1,89 +1,93 @@
-﻿import vlc
 import sys
+import os
 import logging
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QFrame
 from PyQt5.QtCore import Qt
+import vlc
 
 class VLCPlayer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WA_DontCreateNativeAncestors)
-        self.setAttribute(Qt.WA_NativeWindow)
+        self.instance = vlc.Instance("--no-xlib --quiet")
+        self.mediaplayer = self.instance.media_player_new()
         self.logger = logging.getLogger("Advanced_Video_Editor")
-        self.instance = vlc.Instance('--no-xlib', '--hwdec=auto', '--verbose=2')
-        if not self.instance:
-            self.logger.critical("VLC binaries not found. Install VLC (64-bit) or check your PATH.")
-            raise RuntimeError("VLC failed to initialize: libvlc.dll missing.")
-        self._setup_vlc_logging()
-        self.player = self.instance.media_player_new()
-        self.player.set_hwnd(int(self.winId()))
-
-    def _setup_vlc_logging(self):
-        """Connects libvlc logging to the Python logger to monitor HW acceleration."""
-        def vlc_log_callback(data, level, ctx, fmt, args):
-            try:
-                log_map = {0: logging.INFO, 1: logging.ERROR, 2: logging.WARNING, 3: logging.DEBUG}
-                py_level = log_map.get(level, logging.DEBUG)
-                import ctypes
-                message = ctypes.string_at(fmt).decode('utf-8', 'ignore')
-                if any(x in message.lower() for x in ["dxva2", "d3d11va", "hwdec", "using hardware"]):
-                    self.logger.info(f"[VLC-HW-ACCEL] {message}")
-                else:
-                    self.logger.log(py_level, f"[VLC-INTERNAL] {message}")
-            except Exception:
-                pass
-        try:
-            self._vlc_cb = vlc.CallbackPrototype(None, ctypes.c_void_p, ctypes.c_int,
-                                                ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)(vlc_log_callback)
-            vlc.libvlc_log_set(self.instance, self._vlc_cb, None)
-            self.logger.info("[VLC-LOGGER] Internal VLC logging hooked successfully.")
-        except Exception as e:
-            self.logger.error(f"[VLC-LOGGER] Failed to hook libvlc logs: {e}")
+        self.video_frame = QFrame()
+        self.video_frame.setStyleSheet("background-color: black;")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.video_frame)
+        self.setLayout(layout)
+        if sys.platform.startswith("linux"):
+            self.mediaplayer.set_xwindow(self.video_frame.winId())
+        elif sys.platform == "win32":
+            self.mediaplayer.set_hwnd(self.video_frame.winId())
+        elif sys.platform == "darwin":
+            self.mediaplayer.set_nsobject(int(self.video_frame.winId()))
 
     def load(self, path):
-        """Loads a new media file into the VLC player."""
         media = self.instance.media_new(path)
-        self.player.set_media(media)
+        self.mediaplayer.set_media(media)
 
     def play(self):
-        self.player.play()
+        self.mediaplayer.play()
 
     def pause(self):
-        self.player.pause()
+        self.mediaplayer.pause()
 
     def stop(self):
-        self.player.stop()
+        self.mediaplayer.stop()
 
-    def seek(self, seconds: float):
-        self.player.set_time(int(seconds * 1000))
+    def is_playing(self):
+        return self.mediaplayer.is_playing()
 
-    def seek_relative(self, delta: float):
-        new_time = self.player.get_time() + int(delta * 1000)
-        self.player.set_time(max(0, new_time))
+    def set_time(self, ms):
+        self.mediaplayer.set_time(int(ms))
 
-    def set_volume(self, volume: float):
-        self.player.audio_set_volume(int(max(0, min(volume, 200))))
+    def get_time(self):
+        return self.mediaplayer.get_time() / 1000.0
 
-    def set_speed(self, speed: float):
-        self.player.set_rate(max(0.1, float(speed)))
+    def seek(self, seconds):
+        self.set_time(seconds * 1000)
 
-    def update_live_speed(self, speed: float):
-        self.set_speed(speed)
+    def seek_relative(self, delta):
+        current = self.get_time()
+        self.seek(current + delta)
 
-    def get_time(self) -> float:
-        t = self.player.get_time()
-        return t / 1000.0 if t > 0 else 0.0
+    def set_volume(self, volume):
+        self.mediaplayer.audio_set_volume(int(volume))
 
-    def resizeEvent(self, event):
-        """Ensure VLC internal window handles resizing to match overlay math."""
-        super().resizeEvent(event)
-        if hasattr(self, 'player') and self.player:
-            self.player.set_hwnd(int(self.winId()))
+    def set_speed(self, speed):
+        self.mediaplayer.set_rate(speed)
+        
+    def update_live_speed(self, speed):
+        """Updates speed without reloading."""
+        self.mediaplayer.set_rate(speed)
 
-    def is_playing(self) -> bool:
-        return self.player.is_playing()
-
-    def cleanup(self):
-        self.player.stop()
-        self.player.release()
-        self.instance.release()
+    def apply_crop(self, clip_data):
+        """
+        Goal 10: Apply crop geometry to the VLC video output.
+        VLC uses a string format 'W:H:X:Y' for crop geometry.
+        """
+        try:
+            if not any(k.startswith('crop_') for k in clip_data):
+                self.mediaplayer.video_set_crop_geometry(None)
+                return
+            x1 = clip_data.get('crop_x1', 0.0)
+            y1 = clip_data.get('crop_y1', 0.0)
+            x2 = clip_data.get('crop_x2', 1.0)
+            y2 = clip_data.get('crop_y2', 1.0)
+            w = self.mediaplayer.video_get_width()
+            h = self.mediaplayer.video_get_height()
+            if w <= 0 or h <= 0:
+                return
+            crop_x = int(x1 * w)
+            crop_y = int(y1 * h)
+            crop_w = int((x2 - x1) * w)
+            crop_h = int((y2 - y1) * h)
+            if crop_w <= 0 or crop_h <= 0:
+                self.mediaplayer.video_set_crop_geometry(None)
+                return
+            geometry = f"{crop_w}x{crop_h}+{crop_x}+{crop_y}"
+            self.mediaplayer.video_set_crop_geometry(geometry)
+        except Exception as e:
+            self.logger.error(f"[VLC] Apply crop failed: {e}")
