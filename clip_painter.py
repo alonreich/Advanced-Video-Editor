@@ -3,10 +3,13 @@ from PyQt5.QtCore import Qt, QRectF
 
 class ClipPainter:
     @staticmethod
-    def draw_base_rect(painter, rect, is_audio, is_out_of_sync=False):
+    def draw_base_rect(painter, rect, is_audio, is_out_of_sync=False, is_colliding=False):
         """Draws the background fill only."""
         grad = QLinearGradient(0, 0, 0, rect.height())
-        if is_out_of_sync:
+        if is_colliding:
+            grad.setColorAt(0, QColor(255, 60, 60))
+            grad.setColorAt(1, QColor(140, 0, 0))
+        elif is_out_of_sync:
             grad.setColorAt(0, QColor(180, 40, 40))
             grad.setColorAt(1, QColor(100, 20, 20))
         elif is_audio:

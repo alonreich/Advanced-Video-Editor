@@ -38,6 +38,7 @@ class InspectorWidget(QWidget):
         self.chk_mute_track = QCheckBox("Mute Track")
         self.chk_mute_track.toggled.connect(self.on_mute_track_toggled)
         self.btn_resync = QPushButton("🔄 Re-Sync Link")
+        self.btn_resync.setCursor(Qt.PointingHandCursor)
         self.btn_resync.setToolTip("Snap audio back to its video partner's position")
         self.btn_resync.setStyleSheet("background-color: #4A90E2; color: white; font-weight: bold;")
         self.btn_resync.clicked.connect(self.on_resync_clicked)
@@ -109,6 +110,8 @@ class InspectorWidget(QWidget):
         slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, slider.value()/100))
         btn_reset = QToolButton()
         btn_reset.setText("\u21BA")
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setToolTip(f"Reset {title.lower()} to default")
         btn_reset.clicked.connect(lambda: spin.setValue(default))
         btn_reset.clicked.connect(lambda: self.param_changed.emit(param_name, float(default)))
         setattr(self, f"spin_{param_name}", spin)
@@ -125,6 +128,7 @@ class InspectorWidget(QWidget):
         self.btn_crop_toggle = QPushButton("Crop")
         self.btn_crop_toggle.setCheckable(True)
         self.btn_crop_toggle.setCursor(Qt.PointingHandCursor)
+        self.btn_crop_toggle.setToolTip("Toggle crop mode in the preview window")
         self.btn_crop_toggle.setFixedHeight(28)
         self.btn_crop_toggle.clicked.connect(self.crop_toggled.emit)
         self.btn_crop_toggle.setStyleSheet("""
@@ -161,6 +165,8 @@ class InspectorWidget(QWidget):
         grid.addWidget(self.spin_crop_y2, 1, 3)
         btn_reset = QToolButton()
         btn_reset.setText("Reset Crop")
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setToolTip("Reset crop values to default")
         btn_reset.setStyleSheet("background: #333; color: white; border: 1px solid #555; border-radius: 3px;")
         btn_reset.clicked.connect(self.reset_crop)
         grid.addWidget(btn_reset, 2, 0, 1, 4, Qt.AlignCenter)
@@ -200,13 +206,7 @@ class InspectorWidget(QWidget):
     def set_clip(self, clip_model, track_muted=False):
         self.blockSignals(True)
         self.current_clip = clip_model
-        if not clip_model:
-            self.lbl_title.setText("No Selection")
-            self.spin_speed.setEnabled(False)
-            self.spin_volume.setEnabled(False)
-            self.chk_mute_track.setEnabled(False)
-            self.chk_lock_pos.setEnabled(False)
-        else:
+        if clip_model:
             self.lbl_title.setText(f"Clip: {clip_model.name}")
             self.spin_speed.setEnabled(True)
             self.spin_volume.setEnabled(True)
@@ -224,6 +224,14 @@ class InspectorWidget(QWidget):
             h = getattr(clip_model, 'height', 0)
             self.lbl_res.setText(f"Resolution: {w}x{h}" if w > 0 else "Resolution: N/A")
             self.lbl_bitrate.setText(f"Bitrate: {getattr(clip_model, 'bitrate', 0)//1000} kbps")
+            self.btn_crop_toggle.setEnabled(True)
+        else:
+            self.lbl_title.setText("No Selection")
+            self.spin_speed.setEnabled(False)
+            self.spin_volume.setEnabled(False)
+            self.chk_mute_track.setEnabled(False)
+            self.chk_lock_pos.setEnabled(False)
+            self.btn_crop_toggle.setEnabled(False)
         self.blockSignals(False)
 
     def on_resync_clicked(self):

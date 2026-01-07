@@ -10,6 +10,8 @@ class PopOutPlayerWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0,0,0,0)
         snap_back_button = QPushButton("Pop In")
+        snap_back_button.setCursor(Qt.PointingHandCursor)
+        snap_back_button.setToolTip("Pop In")
         snap_back_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
         snap_back_button.clicked.connect(self.preview_widget.toggle_popout)
         layout.addWidget(self.player)
@@ -52,12 +54,34 @@ class SafeOverlay(QWidget):
         self.backup_crop = {}
         self.btn_confirm = QPushButton("Confirm", self)
         self.btn_confirm = QPushButton("âœ” APPLY CROP", self)
+        self.btn_confirm.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm.setToolTip("Apply crop adjustments")
         self.btn_confirm.clicked.connect(self.confirm_crop)
-        self.btn_confirm.setStyleSheet("background-color: #00E676; color: black; border: 2px solid #00A854; border-radius: 4px; font-weight: bold; font-size: 14px;")
+        self.btn_confirm.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2E4D2E, stop:0.5 #1B301B, stop:1 #0F1A0F);
+                color: #A0D0A0; border: 2px solid #0A150A; border-radius: 6px; font-weight: bold; font-size: 13px;
+                border-bottom: 4px solid #050A05;
+            }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A5F3A, stop:1 #1B301B); color: white; }
+            QPushButton:pressed { border-bottom: 1px solid #050A05; margin-top: 3px; background: #0F1A0F; }
+        """)
+        self.btn_confirm.setCursor(Qt.PointingHandCursor)
         self.btn_confirm.hide()
         self.btn_cancel = QPushButton("âœ– CANCEL", self)
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.setToolTip("Cancel crop adjustments")
         self.btn_cancel.clicked.connect(self.cancel_crop)
-        self.btn_cancel.setStyleSheet("background-color: #FF1744; color: white; border: 2px solid #D50000; border-radius: 4px; font-weight: bold; font-size: 14px;")
+        self.btn_cancel.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5C1A1A, stop:0.5 #3B0F0F, stop:1 #240909);
+                color: #D0A0A0; border: 2px solid #1A0505; border-radius: 6px; font-weight: bold; font-size: 13px;
+                border-bottom: 4px solid #120303;
+            }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #752525, stop:1 #3B0F0F); color: white; }
+            QPushButton:pressed { border-bottom: 1px solid #120303; margin-top: 3px; background: #240909; }
+        """)
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.hide()
         import logging
         self.logger = logging.getLogger(__name__)
@@ -96,6 +120,8 @@ class SafeOverlay(QWidget):
             self.btn_confirm.hide()
             self.btn_cancel.hide()
         self.update()
+        if self.parent():
+            self.parent().update()
 
     def confirm_crop(self):
         self.toggle_crop_mode()
@@ -111,8 +137,8 @@ class SafeOverlay(QWidget):
     def resizeEvent(self, event):
         w = event.size().width()
         h = event.size().height()
-        self.btn_confirm.setGeometry(w//2 - 150, h - 60, 140, 40)
-        self.btn_cancel.setGeometry(w//2 + 10, h - 60, 140, 40)
+        self.btn_cancel.setGeometry(20, 20, 160, 45)
+        self.btn_confirm.setGeometry(w - 180, 20, 160, 45)
         super().resizeEvent(event)
 
     def get_video_rect(self):
@@ -394,6 +420,8 @@ class PreviewWidget(QWidget):
         self.overlay.interaction_started.connect(self.interaction_started)
         self.overlay.interaction_ended.connect(self.interaction_ended)
         self.popout_button = QPushButton("Pop Out", self.overlay)
+        self.popout_button.setCursor(Qt.PointingHandCursor)
+        self.popout_button.setToolTip("Pop Out")
         self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
         self.popout_button.clicked.connect(self.toggle_popout)
         layout.addWidget(self.container)
@@ -412,12 +440,15 @@ class PreviewWidget(QWidget):
         ctrl_layout.setContentsMargins(5, 5, 5, 5)
         btn_style_small = "QPushButton { background: #333; color: white; border: 1px solid #555; border-radius: 4px; font-weight: bold; } QPushButton:hover { background: #444; }"
         self.btn_rw = QPushButton("<< 5s")
+        self.btn_rw.setCursor(Qt.PointingHandCursor)
+        self.btn_rw.setToolTip("Rewind 5s")
         self.btn_rw.setFixedSize(60, 30)
         self.btn_rw.setStyleSheet(btn_style_small)
         self.btn_rw.clicked.connect(lambda: self.seek_requested.emit(-5.0))
         self.btn_play = QPushButton("PLAY / PAUSE")
         self.btn_play.setFixedSize(480, 30)
         self.btn_play.setCursor(Qt.PointingHandCursor)
+        self.btn_play.setToolTip("Play/Pause")
         self.btn_play.clicked.connect(self.play_requested.emit)
         self.btn_play.setStyleSheet("""
             QPushButton {
@@ -431,6 +462,8 @@ class PreviewWidget(QWidget):
             QPushButton:pressed { background: #1B5E20; border-style: inset; }
         """)
         self.btn_ff = QPushButton("5s >>")
+        self.btn_ff.setCursor(Qt.PointingHandCursor)
+        self.btn_ff.setToolTip("Fast-forward 5s")
         self.btn_ff.setFixedSize(60, 30)
         self.btn_ff.setStyleSheet(btn_style_small)
         self.btn_ff.clicked.connect(lambda: self.seek_requested.emit(5.0))
@@ -445,6 +478,7 @@ class PreviewWidget(QWidget):
             self.player.setParent(self.popout_window)
             self.popout_window.show()
             self.popout_button.setText("Pop In")
+            self.popout_button.setToolTip("Pop In")
             self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
         else:
             self.player.setParent(self.container)
@@ -452,6 +486,7 @@ class PreviewWidget(QWidget):
             self.popout_window.close()
             self.popout_window = None
             self.popout_button.setText("Pop Out")
+            self.popout_button.setToolTip("Pop Out")
             self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
 
     def resizeEvent(self, event):

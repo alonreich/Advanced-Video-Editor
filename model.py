@@ -57,6 +57,7 @@ class ClipModel:
         m.fade_out = data.get('fade_out', 0.0)
         m.media_type = data.get('media_type', 'video')
         m.has_audio = data.get('has_audio', True)
+        m.linked_uid = data.get('linked_uid', None)
         return m
 
     def to_dict(self):
@@ -86,4 +87,5 @@ class ClipModel:
             'fade_out': self.fade_out,
             'media_type': self.media_type,
             'has_audio': self.has_audio,
+            'linked_uid': self.linked_uid,
         }

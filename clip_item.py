@@ -37,7 +37,18 @@ class ClipItem(QGraphicsRectItem):
         self.thumbnail_start = None
         self.thumbnail_end = None
         self.drag_mode = None
+        self.is_colliding = False
         self.update_cache()
+
+    def hoverEnterEvent(self, event):
+        self.setToolTip(f"{self.model.name}\nDuration: {self.model.duration:.2f}s")
+        self.setCursor(Qt.PointingHandCursor)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setToolTip("")
+        self.setCursor(Qt.ArrowCursor)
+        super().hoverLeaveEvent(event)
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemSelectedHasChanged:
@@ -63,7 +74,7 @@ class ClipItem(QGraphicsRectItem):
                     if abs(item.model.start - self.model.start) > 0.001:
                         is_out_of_sync = True
                     break
-        ClipPainter.draw_base_rect(painter, rect, is_audio, is_out_of_sync)
+        ClipPainter.draw_base_rect(painter, rect, is_audio, is_out_of_sync, self.is_colliding)
         ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
         ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
         ClipPainter.draw_fades(painter, rect, self.model, self.scale)
@@ -84,14 +95,12 @@ class ClipItem(QGraphicsRectItem):
         self._is_interacting = True
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
+    def set_speed(self, speed):
+        self.speed = speed
+        self.model.speed = speed
+        self.update_cache()
 
-    def mouseReleaseEvent(self, event):
-        self.logger.debug("ClipItem mouseReleaseEvent executing.")
-        self._is_interacting = False
-        super().mouseReleaseEvent(event)
-        view = self.scene().views()[0]
-        self.model.start = self.x() / self.scale
-        self.model.track = round((self.y() - 30) / 40)
-        view.data_changed.emit()
+    def set_volume(self, volume):
+        self.volume = volume
+        self.model.volume = volume
+        self.update_cache()

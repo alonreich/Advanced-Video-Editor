@@ -74,7 +74,7 @@ class ProjectController:
             self.mw.inspector.combo_res.setCurrentIndex(idx)
         else:
             self.mw.inspector.combo_res.setCurrentIndex(0)
-        self.mw.timeline.fit_to_view()
+        self.mw.timeline.update_clip_positions()
 
     def reset_project(self):
         if QMessageBox.question(self.mw, 'Reset', "Start new project? Unsaved changes lost.", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:

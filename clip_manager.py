@@ -54,29 +54,23 @@ class ClipManager:
         return new_item
 
     def delete_current(self):
-        """Goal 5: Ripple editing to automatically propagate forward and maintain continuity."""
+        """Deletes the selected clip and leaves a gap on the timeline."""
         item = self.mw.timeline.get_selected_item()
         if not item: return
-        self.mw.save_state_for_undo()
-        track = item.track
+        track = item.model.track
         start = item.model.start
-        dur = item.model.duration
-        subsequent_clips = [i for i in self.mw.timeline.scene.items() 
-                            if isinstance(i, ClipItem) and i != item 
-                            and i.track == track and i.model.start > start]
-        for i in subsequent_clips:
-            i.model.start -= dur
-            i.setX(i.model.start * i.scale)
-            if i.model.linked_uid:
-                for partner in self.mw.timeline.scene.items():
-                    if isinstance(partner, ClipItem) and partner.uid == i.model.linked_uid:
-                        partner.model.start = i.model.start
-                        partner.setX(partner.model.start * partner.scale)
+        self.mw.save_state_for_undo()
+        if item.model.linked_uid:
+            for partner in self.mw.timeline.scene.items():
+                if isinstance(partner, ClipItem) and partner.model.uid == item.model.linked_uid:
+                    self.mw.timeline.scene.removeItem(partner)
+                    break
         self.mw.timeline.remove_selected_clips()
         self.mw.timeline.update_tracks()
         self.mw.inspector.set_clip(None)
         self.mw.timeline.data_changed.emit()
         self.mw.timeline.fit_to_view()
+        self.mw.timeline.timeline_view.check_for_gaps(track, start)
 
     def on_param_changed(self, param, value):
         item = self.mw.timeline.get_selected_item()

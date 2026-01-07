@@ -79,12 +79,12 @@ class TimelineGridPainter:
         painter.drawPolygon(poly)
 
     def draw_razor_indicator(self, painter, rect, x_pos):
-        """Draws a vertical dashed line at the potential cut point."""
+        """Goal 16: High-visibility Razor Ghost line."""
         painter.save()
-        pen = QPen(QColor(255, 255, 0, 180), 1, Qt.DashLine)
+        pen = QPen(QColor(255, 255, 0, 200), 1, Qt.DashLine)
         painter.setPen(pen)
         painter.drawLine(int(x_pos), 0, int(x_pos), int(rect.height()))
         painter.setBrush(QColor(255, 255, 0))
         painter.setPen(Qt.NoPen)
-        painter.drawRect(int(x_pos) - 2, 0, 4, self.ruler_height)
+        painter.drawRect(int(x_pos) - 1, 0, 2, self.ruler_height)
         painter.restore()

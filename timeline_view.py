@@ -1,3 +1,5 @@
+from PyQt5.QtWidgets import QGraphicsRectItem, QMessageBox, QPushButton
+from PyQt5.QtGui import QBrush, QColor
 import os
 import logging
 from enum import Enum
@@ -48,6 +50,7 @@ class TimelineView(QGraphicsView):
         self.scene.selectionChanged.connect(self.on_selection_change)
         self.painter_helper = TimelineGridPainter(self.ruler_height)
         self.ops = TimelineOperations(self)
+        self.setMouseTracking(True)
 
     def get_snapped_x(self, x, **kwargs):
         return self.ops.get_snapped_x(x, **kwargs)
@@ -66,6 +69,50 @@ class TimelineView(QGraphicsView):
 
     def update_clip_proxy_path(self, s, p):
         self.ops.update_clip_proxy_path(s, p)
+
+    def check_for_gaps(self, track_idx, deleted_start):
+        """Detects if a hole was left between clips and prompts the user."""
+        clips = sorted([i for i in self.scene.items() if isinstance(i, ClipItem) and i.track == track_idx], 
+                       key=lambda x: x.model.start)
+        gap_start, gap_end, found_gap = 0.0, 0.0, False
+        for i in range(len(clips) - 1):
+            end_current = clips[i].model.start + clips[i].model.duration
+            start_next = clips[i+1].model.start
+            if start_next > end_current + 0.001:
+                gap_start, gap_end = end_current, start_next
+                found_gap = True
+                break
+        if found_gap:
+            rect = QGraphicsRectItem(gap_start * self.scale_factor, track_idx * self.track_height + 30, 
+                                    (gap_end - gap_start) * self.scale_factor, self.track_height)
+            rect.setBrush(QBrush(QColor(255, 0, 0, 100))) 
+            rect.setPen(Qt.NoPen)
+            self.scene.addItem(rect)
+            if self.prompt_close_gap():
+                shift = gap_end - gap_start
+                for clip in clips:
+                    if clip.model.start >= gap_end:
+                        clip.model.start -= shift
+                self.update_clip_positions()
+                self.data_changed.emit()
+            self.scene.removeItem(rect)
+
+    def prompt_close_gap(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Gap Detected")
+        msg.setText("A gap was created! Would you like me to close the gap by shifting clips to the left?")
+        yes_btn = msg.addButton("Yes", QMessageBox.YesRole)
+        yes_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2E4D2E, stop:1 #0F1A0F);
+            color: #A0D0A0; border: 1px solid #050A05; font-weight: bold; padding: 10px;
+        """)
+        no_btn = msg.addButton("No. Leave the gap as it is", QMessageBox.NoRole)
+        no_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5C1A1A, stop:1 #240909);
+            color: #D0A0A0; border: 1px solid #120303; font-weight: bold; padding: 10px;
+        """)
+        msg.exec_()
+        return msg.clickedButton() == yes_btn
 
     def drawForeground(self, painter, rect):
         vp_info = {'font': self.font()}
@@ -165,22 +212,57 @@ class TimelineView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.is_dragging_playhead:
+        if self.is_dragging_clip:
+            item = self.get_selected_item()
+            if item:
+                delta = self.mapToScene(event.pos()) - self.mapToScene(self.drag_start_pos)
+                raw_x = self.drag_start_item_pos.x() + delta.x()
+                new_x = self.get_snapped_x(raw_x, ignore_item=item) if self.snapping_enabled else raw_x
+                track = max(0, min(self.num_tracks - 1, round((self.drag_start_item_pos.y() + delta.y() - self.ruler_height) / self.track_height)))
+                new_y = (track * self.track_height) + self.ruler_height
+                collision = any(i for i in self.scene.items() if isinstance(i, ClipItem) and i != item and i.track == track and i.x() < new_x + item.rect().width() - 1 and i.x() + i.rect().width() > new_x + 1)
+                if not collision:
+                    item.setPos(QPointF(new_x, new_y))
+                    item.model.track, item.model.start = track, new_x / self.scale_factor
+                    item.is_colliding = False
+                    item.setToolTip("")
+                else:
+                    item.is_colliding = True
+                    item.setToolTip("LANE BLOCKED: Overlap not allowed.")
+                item.update_cache()
+                item.update()
+        elif self.is_dragging_playhead:
             self.user_set_playhead(self.mapToScene(event.pos()).x())
         elif self.mode == Mode.RAZOR:
-            self.razor_mouse_x = self.mapToScene(event.pos()).x()
+            raw_x = self.mapToScene(event.pos()).x()
+            self.razor_mouse_x = self.get_snapped_x(raw_x)
             self.viewport().update()
-        super().mouseMoveEvent(event)
+        else:
+            super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         if self.is_dragging_clip:
             self.is_dragging_clip = False
+            if self.snap_line:
+                self.scene.removeItem(self.snap_line)
+                self.snap_line = None
+            item = self.get_selected_item()
+            if item:
+                item.is_colliding = False
+                item.setToolTip("")
+                colliding_items = [i for i in self.scene.items() if isinstance(i, ClipItem) and i != item and i.track == item.track and i.collidesWithItem(item)]
+                if colliding_items:
+                    target = colliding_items[0]
+                    if item.x() + (item.rect().width() / 2) < target.x() + (target.rect().width() / 2):
+                        new_x = target.x() - item.rect().width()
+                    else:
+                        new_x = target.x() + target.rect().width()
+                    item.setX(max(0, new_x))
+                item.model.start = item.x() / self.scale_factor
+                item.update_cache()
+                item.update()
             self.compact_lanes()
             self.interaction_ended.emit()
-        if self.is_dragging_playhead:
-            self.is_dragging_playhead = False
-            self.interaction_ended.emit()
-        super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event):
         item = self.itemAt(event.pos())
@@ -201,11 +283,11 @@ class TimelineView(QGraphicsView):
             item = self.itemAt(event.pos())
             time_pos = 0
             if item and isinstance(item, ClipItem):
-                track_idx = item.track
-                time_pos = max(0, self.get_snapped_x(pt.x()) / self.scale_factor)
-            else:
-                track_idx = -1
-                time_pos = 0
+                self.mw.statusBar().showMessage("CANNOT IMPORT: Space already occupied on this track.", 3000)
+                event.ignore()
+                return
+            track_idx = max(0, round((pt.y() - self.ruler_height) / self.track_height))
+            time_pos = max(0, self.get_snapped_x(pt.x()) / self.scale_factor)
             for url in event.mimeData().urls():
                 if os.path.isfile(url.toLocalFile()):
                     self.file_dropped.emit(url.toLocalFile(), track_idx, time_pos)

@@ -127,12 +127,28 @@ class FilterGraphGenerator:
                 src = f"[{input_idx}:a]"
             audio_pad = f"[a{i}_out]"
             vol = (clip.get('volume', 100) / 100.0) * self.vols.get(clip['track'], 1.0)
+            speed = float(clip.get('speed', 1.0))
             audio_chain = [
                 f"{src}atrim=start={clip['source_in']}:duration={clip['dur']}",
                 "asetpts=PTS-STARTPTS",
+            ]
+            if speed != 1.0:
+                atempo_filters = []
+                temp_speed = speed
+                while temp_speed > 2.0:
+                    atempo_filters.append("atempo=2.0")
+                    temp_speed /= 2.0
+                while temp_speed < 0.5 and temp_speed > 0:
+                    atempo_filters.append("atempo=0.5")
+                    temp_speed /= 0.5
+                if temp_speed != 1.0:
+                    atempo_filters.append(f"atempo={temp_speed}")
+                if atempo_filters:
+                    audio_chain.append(",".join(atempo_filters))
+            audio_chain.extend([
                 f"volume={vol:.2f}",
                 f"adelay={int(clip['start'] * 1000)}:all=1{audio_pad}"
-            ]
+            ])
             filter_parts.append(",".join(audio_chain))
             audio_outs.append(audio_pad)
         if audio_outs:

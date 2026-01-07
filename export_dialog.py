@@ -25,6 +25,8 @@ class ExportDialog(QDialog):
         self.bar = QProgressBar()
         l.addWidget(self.bar)
         btn = QPushButton("Start Export")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Start the video export process")
         btn.clicked.connect(self.start_export)
         l.addWidget(btn)
 
