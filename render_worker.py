@@ -22,16 +22,22 @@ class RenderWorker(QThread):
         self.process = None
 
     def run(self):
+        """Standard Rendering Implementation."""
         try:
-            w, h = (1080, 1920) if "Portrait" in self.res else (1920, 1080)
-            if "2560" in self.res: w, h = 2560, 1440
-            elif "3840" in self.res: w, h = 3840, 2160
+            if "2560" in self.res: 
+                w, h = 2560, 1440
+            elif "3840" in self.res: 
+                w, h = 3840, 2160
+            else:
+                w, h = (1080, 1920) if "Portrait" in self.res else (1920, 1080)
             gen = FilterGraphGenerator(self.clips, w, h, self.vols, self.mutes)
-            inputs, f_str, v_map, a_map = gen.build(is_export=True)
+
+            inputs, f_str, v_map, a_map, _ = gen.build(is_export=True)
             gpu_codec = BinaryManager.get_best_encoder(self.logger)
             cmd = [BinaryManager.get_executable('ffmpeg'), '-y', '-hide_banner']
+            hw_accel = ['-hwaccel', 'cuda'] if 'nvenc' in gpu_codec else []
             for inp in inputs:
-                cmd.extend(['-i', inp])
+                cmd.extend(hw_accel + ['-i', inp])
             cmd.extend(['-filter_complex', f_str])
             cmd.extend(['-map', v_map, '-map', a_map])
             if gpu_codec != 'libx264':
@@ -60,6 +66,23 @@ class RenderWorker(QThread):
             self.error.emit(str(e))
 
     def read_log(self):
-        line = self.process.readAllStandardOutput().data().decode(errors='ignore').strip()
-        if "time=" in line:
-            self.logger.debug(line)
+        """Reads FFmpeg output and parses for progress."""
+        data = self.process.readAllStandardOutput().data().decode(errors='ignore').strip()
+
+        self.logger.debug(f"FFmpeg: {data}")
+
+    def render_fragment(self, inputs, f_str, v_map, a_map, frag_path):
+        """Executes a single fragment render pass."""
+        gpu_codec = BinaryManager.get_best_encoder(self.logger)
+        cmd = [BinaryManager.get_executable('ffmpeg'), '-y', '-hide_banner', '-loglevel', 'error']
+        for inp in inputs:
+            cmd.extend(['-i', inp])
+        cmd.extend(['-filter_complex', f_str])
+        cmd.extend(['-map', v_map, '-map', a_map])
+        if gpu_codec != 'libx264':
+            cmd.extend(['-c:v', gpu_codec, '-preset', 'p1', '-f', 'mpegts'])
+        else:
+            cmd.extend(['-c:v', 'libx264', '-preset', 'ultrafast', '-f', 'mpegts'])
+        cmd.append(frag_path)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc.communicate()

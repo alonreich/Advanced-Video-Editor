@@ -1,5 +1,6 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, asdict
 import uuid
+
 @dataclass
 class ClipModel:
     path: str
@@ -28,64 +29,23 @@ class ClipModel:
     has_audio: bool = True
     linked_uid: str = None
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
-    @staticmethod
-    def from_dict(data):
-        m = ClipModel(
-            path=data.get('path', ''),
-            track=data.get('track', 0),
-            start=data.get('start', 0.0),
-            duration=data.get('dur', 5.0),
-            name=data.get('name', 'Untitled'),
-            uid=data.get('uid', str(uuid.uuid4()))
-        )
-        m.source_in = data.get('source_in', 0.0)
-        m.source_duration = data.get('source_duration', m.duration)
-        m.speed = data.get('speed', 1.0)
-        m.volume = data.get('volume', 100.0)
-        m.scale_x = data.get('scale_x', 1.0)
-        m.scale_y = data.get('scale_y', 1.0)
-        m.pos_x = data.get('pos_x', 0.0)
-        m.pos_y = data.get('pos_y', 0.0)
-        m.width = data.get('width', 1920)
-        m.height = data.get('height', 1080)
-        m.bitrate = data.get('bitrate', 0)
-        m.crop_x1 = data.get('crop_x1', 0.0)
-        m.crop_y1 = data.get('crop_y1', 0.0)
-        m.crop_x2 = data.get('crop_x2', 1.0)
-        m.crop_y2 = data.get('crop_y2', 1.0)
-        m.fade_in = data.get('fade_in', 0.0)
-        m.fade_out = data.get('fade_out', 0.0)
-        m.media_type = data.get('media_type', 'video')
-        m.has_audio = data.get('has_audio', True)
-        m.linked_uid = data.get('linked_uid', None)
-        return m
+    start_freeze: float = 0.0
+    end_freeze: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data):
+        if 'dur' in data and 'duration' not in data:
+            data = data.copy()
+            data['duration'] = data['dur']
+        valid_keys = {f.name for f in fields(cls)}
+        filtered_args = {k: v for k, v in data.items() if k in valid_keys}
+        required_defaults = {'path': "MISSING_PATH", 'track': 0, 'start': 0.0, 'duration': 5.0}
+        for key, default in required_defaults.items():
+            if key not in filtered_args:
+                filtered_args[key] = default
+        return cls(**filtered_args)
 
     def to_dict(self):
-        return {
-            'uid': self.uid,
-            'name': self.name,
-            'path': self.path,
-            'start': self.start,
-            'dur': self.duration,
-            'source_in': self.source_in,
-            'source_duration': self.source_duration,
-            'track': self.track,
-            'speed': self.speed,
-            'volume': self.volume,
-            'scale_x': self.scale_x,
-            'scale_y': self.scale_y,
-            'pos_x': self.pos_x,
-            'pos_y': self.pos_y,
-            'width': self.width,
-            'height': self.height,
-            'bitrate': self.bitrate,
-            'crop_x1': self.crop_x1,
-            'crop_y1': self.crop_y1,
-            'crop_x2': self.crop_x2,
-            'crop_y2': self.crop_y2,
-            'fade_in': self.fade_in,
-            'fade_out': self.fade_out,
-            'media_type': self.media_type,
-            'has_audio': self.has_audio,
-            'linked_uid': self.linked_uid,
-        }
+        data = asdict(self)
+        data['dur'] = self.duration
+        return data

@@ -20,6 +20,9 @@ class PlaybackManager(QObject):
         self.timer.setInterval(33)
         self.canvas_width = 1920
         self.canvas_height = 1080
+        self._seek_timer = QTimer()
+        self._seek_timer.setSingleShot(True)
+        self._seek_timer.setInterval(50)
 
     def set_resolution(self, w, h):
         """Updates the internal canvas size for the renderer."""
@@ -65,6 +68,11 @@ class PlaybackManager(QObject):
             self.state_changed.emit(False)
             self.logger.warning("No clips on timeline, stopping playback.")
             return
+        if is_scrubbing := self.timeline.timeline_view.is_dragging_playhead:
+            for clip in state:
+                if clip.get('proxy_path') and os.path.exists(clip['proxy_path']):
+                    clip['path'] = clip['proxy_path']
+
         gen = FilterGraphGenerator(
             state,
             width=self.canvas_width,
@@ -72,6 +80,7 @@ class PlaybackManager(QObject):
             volumes=track_vols,
             mutes=track_mutes
         )
+        gen.clips = state
         inputs, complex_filter, v_pad, a_pad, main_input_used = gen.build(
             start_time=current_time,
             duration=self.timeline.get_content_end(),
@@ -80,7 +89,10 @@ class PlaybackManager(QObject):
         try:
             self.player.play_filter_graph(complex_filter, inputs, main_input_used)
             self.player.play()
-            self.player.seek(current_time)
+
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(150, lambda: self.player.seek(current_time))
+            
             self.is_dirty = False
             self.timer.start()
             self.state_changed.emit(True)
@@ -92,7 +104,8 @@ class PlaybackManager(QObject):
 
     def _sync_playhead(self):
         """Main loop: Syncs UI playhead from player time."""
-        if self.timeline.timeline_view.is_dragging_playhead:
+
+        if self.timeline.timeline_view.is_dragging_playhead or getattr(self, '_seeking', False):
             return
         if not self.player.is_playing():
             return
@@ -111,3 +124,34 @@ class PlaybackManager(QObject):
             self.timer.stop()
             self.playhead_updated.emit(max_end)
             self.state_changed.emit(False)
+
+    def seek_and_sync(self, time_sec):
+        """Goal 8: Ultra-fast seek with buffer flushing for aggressive navigation."""
+        self._seeking = True
+
+        max_dur = self.timeline.get_content_end()
+        target_time = max(0.0, min(time_sec, max_dur))
+        
+        if self.player.is_playing():
+            self.player.pause()
+        
+        if hasattr(self.inspector.mw.preview, 'overlay'):
+            self.inspector.mw.preview.overlay.is_loading = True
+        
+        self._target_seek_time = time_sec
+        self._seek_retries = 0
+        def attempt_seek():
+            if not self.player.mpv or self._seek_retries > 10:
+                return
+            self.player.seek(self._target_seek_time)
+            if abs(self.player.get_time() - self._target_seek_time) > 0.5:
+                self._seek_retries += 1
+           
+                QTimer.singleShot(250, attempt_seek)
+            else:
+                if hasattr(self.inspector.mw.preview, 'overlay'):
+                    self.inspector.mw.preview.overlay.is_loading = False
+                self.playhead_updated.emit(self.player.get_time())
+                self._seeking = False
+
+        attempt_seek()

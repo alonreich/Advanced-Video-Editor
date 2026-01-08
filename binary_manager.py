@@ -16,12 +16,17 @@ class BinaryManager:
         logger = logging.getLogger("Advanced_Video_Editor")
         src_dll = os.path.join(bin_dir, "libmpv-2.dll")
         dst_dll = os.path.join(bin_dir, "mpv-1.dll")
-        if os.path.exists(src_dll) and not os.path.exists(dst_dll):
-            try:
-                shutil.copy2(src_dll, dst_dll)
-                logger.info(f"[BINARY] Auto-patched mpv-1.dll from libmpv-2.dll")
-            except Exception as e:
-                logger.error(f"[BINARY] Failed to patch DLL: {e}")
+        if os.path.exists(src_dll):
+            if os.path.exists(dst_dll) and os.path.getsize(src_dll) == os.path.getsize(dst_dll):
+                logger.info(f"[BINARY] mpv-1.dll already exists and is up-to-date. Skipping copy.")
+            else:
+                try:
+                    shutil.copy2(src_dll, dst_dll)
+                    logger.info(f"[BINARY] Auto-patched mpv-1.dll from libmpv-2.dll")
+                except PermissionError:
+                    logger.critical(f"[BINARY] ERROR: Cannot patch mpv-1.dll. It is likely in use by another process. Please close all instances of the application and try again.")
+                except Exception as e:
+                    logger.error(f"[BINARY] Failed to patch DLL: {e}")
         os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         os.environ["MPV_HOME"] = bin_dir
         local_vlc = os.path.join(bin_dir, "libvlc.dll")
@@ -47,7 +52,9 @@ class BinaryManager:
             ffmpeg_bin = BinaryManager.get_executable('ffmpeg')
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            output = subprocess.check_output([ffmpeg_bin, '-encoders'], startupinfo=si, stderr=subprocess.STDOUT).decode()
+
+            output = subprocess.check_output([ffmpeg_bin, '-encoders'], startupinfo=si, stderr=subprocess.STDOUT).decode('utf-8', errors='ignore')
+            
             if 'av1_nvenc' in output:
                 logger.info("[RENDER] NVIDIA 40-Series detected. Using AV1_NVENC.")
                 BinaryManager._cached_encoder = 'av1_nvenc'
@@ -94,13 +101,13 @@ class BinaryManager:
         for root, dirs, files in os.walk(plugins_dir):
             for file in files:
                 if file.endswith(".dll"):
+                    plugin_path = os.path.join(root, file)
                     plugin_count += 1
-                    fpath = os.path.join(root, file)
                     try:
-                        with open(fpath, 'rb') as f:
-                            f.read(1024)
+                        with open(plugin_path, 'rb') as f:
+                            pass
                     except Exception as e:
-                        failed_reads.append(f"{file} ({e})")
+                        failed_reads.append(f"{plugin_path} (Error: {e})")
         if failed_reads:
             logger.error(f"[BINARY] {len(failed_reads)} VLC plugins are CORRUPT or UNREADABLE.")
             for err in failed_reads[:5]:

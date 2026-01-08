@@ -10,6 +10,7 @@ class AssetLoader(QObject):
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
+        self._shutting_down = False
         self.base_dir = main_window.base_dir
         self.thread_pool = QThreadPool()
         self.thread_pool.setMaxThreadCount(os.cpu_count() or 4)
@@ -52,6 +53,9 @@ class AssetLoader(QObject):
                 self.mw.media_pool.addItem(item)
                 if music_only:
                     self.handle_drop(local_path, next_track + i, 0)
+            
+        if False:
+                    self.handle_drop(local_path, next_track + i, 0)
 
     def handle_drop(self, path, track, time):
         is_audio = any(path.lower().endswith(x) for x in ['.mp3', '.wav', '.aac', '.flac', '.m4a'])
@@ -62,12 +66,14 @@ class AssetLoader(QObject):
                     if hasattr(item, 'track'):
                         occupied_tracks.add(item.track)
             if is_audio:
+
                 track = 1
-                if occupied_tracks:
-                    track = max(occupied_tracks) + 1
+                while track in occupied_tracks and track < 49:
+                    track += 1
             else:
+
                 track = 0
-                while track in occupied_tracks:
+                while track in occupied_tracks and track < 49:
                     track += 1
         is_internal = False
         if self.mw.pm.assets_dir and os.path.abspath(path).startswith(os.path.abspath(self.mw.pm.assets_dir)):
@@ -76,15 +82,30 @@ class AssetLoader(QObject):
             local_path = path
         else:
             local_path = self.mw.pm.import_asset(path)
+
         if local_path in self._pending_probes:
-            self.mw.logger.warning(f"Ignored duplicate drop event for: {local_path}")
+            self.mw.logger.warning(f"[LOADER] Blocking duplicate import for: {local_path}")
             return
+
+        in_pool = False
+        for i in range(self.mw.media_pool.count()):
+            if self.mw.media_pool.item(i).data(Qt.UserRole) == local_path:
+                in_pool = True
+                break
+        
+        if not in_pool:
+            item = QListWidgetItem(os.path.basename(local_path))
+            item.setData(Qt.UserRole, local_path)
+            self.mw.media_pool.addItem(item)
+
         self._pending_probes.add(local_path)
         worker = ProbeWorker(local_path, track_id=track, insert_time=time)
         worker.signals.result.connect(self.on_probe_done)
         self.thread_pool.start(worker)
 
     def on_probe_done(self, info):
+        if self._shutting_down: 
+            return
         track = info.get('track_id', 0)
         time = info.get('insert_time', 0.0)
         if 'path' in info and info['path'] in self._pending_probes:
@@ -100,6 +121,7 @@ class AssetLoader(QObject):
             'name': os.path.basename(info['path']),
             'start': time,
             'dur': info['duration'],
+            'duration': info['duration'],
             'track': track,
             'path': info['path'],
             'width': info.get('width', 0),
@@ -110,6 +132,7 @@ class AssetLoader(QObject):
         self.mw.timeline.add_clip(video_data)
         self.mw.timeline.update_tracks()
         self.mw.timeline.fit_to_view()
+        self.mw.save_state_for_undo()
         self.regenerate_assets(video_data)
 
     def regenerate_assets(self, data):
@@ -119,7 +142,8 @@ class AssetLoader(QObject):
     def _process_regen_queue(self):
         while self._regen_queue:
             uid, data = self._regen_queue.popitem()
-            if data.get('has_audio'):
+
+            if data.get('media_type') == 'audio':
                 self.wave_worker.add_task(data['path'], data['uid'])
             if data.get('media_type') == 'video':
                 self.thumb_worker.add_task(data['path'], data['uid'], data['dur'])
@@ -142,10 +166,22 @@ class AssetLoader(QObject):
                 i.update()
 
     def cleanup(self):
+        """Goal 19: Safe shutdown sequence to prevent race conditions."""
+        self._shutting_down = True
+        self.mw.logger.info("[SHUTDOWN] Initiating safe teardown...")
+
         self.thumb_worker.stop()
         self.wave_worker.stop()
         self.proxy_worker.stop()
-        self.thread_pool.waitForDone(100)
+
+        self.mw.logger.info("[SHUTDOWN] Waiting for ThreadPool tasks...")
+        if not self.thread_pool.waitForDone(3000):
+            self.mw.logger.warning("[SHUTDOWN] ThreadPool timed out. Active probes may crash.")
+
+        workers = [self.thumb_worker, self.wave_worker, self.proxy_worker]
+        for w in workers:
+            if not w.wait(2000):
+                self.mw.logger.warning(f"[SHUTDOWN] Worker {type(w).__name__} failed to exit gracefully.")
 
     def request_proxy(self, uid, path):
         self.mw.logger.info(f"[ASSET] Requesting proxy for {uid}")

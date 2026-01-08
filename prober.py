@@ -126,8 +126,13 @@ class WaveformWorker(QThread):
     def run(self):
         while self.running:
             try:
-                task = self.queue.get()
-                if task is None: break
+                try:
+                    task = self.queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                    
+                if task is None:
+                    break
                 path, uid = task
                 try:
                     stat = os.stat(path)

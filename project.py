@@ -20,26 +20,52 @@ class ProjectManager:
         os.makedirs(self.projects_root, exist_ok=True)
         if self.current_project_dir:
             os.makedirs(os.path.join(self.current_project_dir, "voiceover"), exist_ok=True)
-        self.enforce_fifo_limit()
-
+            
     def enforce_fifo_limit(self):
-        """Goal 11: Strictly enforce 10-project limit using FIFO logic."""
-        all_projs = [
-            os.path.join(self.projects_root, d) 
-            for d in os.listdir(self.projects_root) 
-            if os.path.isdir(os.path.join(self.projects_root, d))
-        ]
-        all_projs.sort(key=os.path.getmtime)
-        if len(all_projs) > 10:
-            projects_to_delete = all_projs[:-10]
-            for oldest in projects_to_delete:
-                if oldest == self.current_project_dir:
-                    continue
-                self.logger.info(f"[FIFO] Naming and shaming old project for deletion: {oldest}")
-                try:
-                    shutil.rmtree(oldest, ignore_errors=True)
-                except Exception as e:
-                    self.logger.error(f"[FIFO] Failed to nuke {oldest}: {e}")
+        """Goal 11: Improved FIFO logic with safety protection for active projects."""
+        import time
+        def get_project_mtime(project_path):
+            p_json = os.path.join(project_path, "project.json")
+            a_json = os.path.join(project_path, "project.autosave.json")
+            mtimes = [os.path.getmtime(project_path)]
+            if os.path.exists(p_json): mtimes.append(os.path.getmtime(p_json))
+            if os.path.exists(a_json): mtimes.append(os.path.getmtime(a_json))
+            return max(mtimes)
+
+        all_dirs = [os.path.join(self.projects_root, d) for d in os.listdir(self.projects_root) 
+                    if os.path.isdir(os.path.join(self.projects_root, d))]
+
+        valid_projs = [p for p in all_dirs if os.path.exists(os.path.join(p, "project.json")) 
+                       or os.path.exists(os.path.join(p, "project.autosave.json"))]
+        
+        if len(valid_projs) <= 10:
+            return
+
+        valid_projs.sort(key=get_project_mtime)
+
+        to_delete_count = len(valid_projs) - 10
+        deleted_count = 0
+        
+        for proj_path in valid_projs:
+            if deleted_count >= to_delete_count:
+                break
+
+            abs_proj = os.path.abspath(proj_path)
+            abs_active = os.path.abspath(self.current_project_dir) if self.current_project_dir else ""
+            is_active = (abs_active and os.path.normcase(abs_proj) == os.path.normcase(abs_active))
+            
+            is_recent = (time.time() - get_project_mtime(proj_path)) < 60
+            
+            if is_active or is_recent:
+                self.logger.info(f"[FIFO] Protection active for {os.path.basename(proj_path)}. Skipping.")
+                continue
+
+            self.logger.warning(f"[FIFO] Nuking old project to maintain 10-project limit: {proj_path}")
+            try:
+                shutil.rmtree(proj_path, ignore_errors=True)
+                deleted_count += 1
+            except Exception as e:
+                self.logger.error(f"[FIFO] Failed to delete {proj_path}: {e}")
 
     def delete_all_projects(self):
         try:
@@ -230,7 +256,6 @@ class ProjectManager:
         if not self.current_project_dir:
             self.create_project()
         vo_dir = os.path.join(self.current_project_dir, "voiceover")
-        os.makedirs(vo_dir, exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"VO_{timestamp}.wav"
         return os.path.join(vo_dir, filename)

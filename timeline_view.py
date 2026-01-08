@@ -17,7 +17,7 @@ class Mode(Enum):
     RAZOR = 2
 
 class TimelineView(QGraphicsView):
-    clip_selected = pyqtSignal(object)
+    clip_selected = pyqtSignal(list)
     time_updated = pyqtSignal(float)
     file_dropped = pyqtSignal(str, int, float)
     clip_split_requested = pyqtSignal(object, float)
@@ -38,9 +38,11 @@ class TimelineView(QGraphicsView):
         self.playhead_pos = 0.0
         self.ruler_height = 30
         self.snapping_enabled = True
+        self.zoom_locked = False
         self.snap_line = None
         self.is_dragging_playhead = False
         self.is_dragging_clip = False
+        self.active_resize_item = None
         self.scene = TimelineScene(self.num_tracks, self.track_height)
         self.setScene(self.scene)
         self.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -71,67 +73,116 @@ class TimelineView(QGraphicsView):
         self.ops.update_clip_proxy_path(s, p)
 
     def check_for_gaps(self, track_idx, deleted_start):
-        """Detects if a hole was left between clips and prompts the user."""
-        clips = sorted([i for i in self.scene.items() if isinstance(i, ClipItem) and i.track == track_idx], 
-                       key=lambda x: x.model.start)
-        gap_start, gap_end, found_gap = 0.0, 0.0, False
-        for i in range(len(clips) - 1):
-            end_current = clips[i].model.start + clips[i].model.duration
-            start_next = clips[i+1].model.start
-            if start_next > end_current + 0.001:
-                gap_start, gap_end = end_current, start_next
-                found_gap = True
-                break
+        """Goal 5: Detects if the deletion created a gap and prompts for ripple shift."""
+        clips = sorted([i for i in self.scene.items() if isinstance(i, ClipItem) 
+                        and i.track == track_idx], key=lambda x: x.model.start)
+        
+        found_gap = False
+        gap_start, gap_end = 0.0, 0.0
+
+        for i in range(len(clips)):
+
+            if clips[i].model.start > deleted_start + 0.001:
+                prev_end = clips[i-1].model.start + clips[i-1].model.duration if i > 0 else 0.0
+                if clips[i].model.start > prev_end + 0.001:
+                    gap_start = prev_end
+                    gap_end = clips[i].model.start
+                    found_gap = True
+                    break
         if found_gap:
             rect = QGraphicsRectItem(gap_start * self.scale_factor, track_idx * self.track_height + 30, 
                                     (gap_end - gap_start) * self.scale_factor, self.track_height)
             rect.setBrush(QBrush(QColor(255, 0, 0, 100))) 
             rect.setPen(Qt.NoPen)
             self.scene.addItem(rect)
+            self.viewport().repaint()
+            from PyQt5.QtWidgets import QApplication
+            QApplication.processEvents()
             if self.prompt_close_gap():
                 shift = gap_end - gap_start
-                for clip in clips:
-                    if clip.model.start >= gap_end:
-                        clip.model.start -= shift
+                for item in self.scene.items():
+                    if isinstance(item, ClipItem):
+                        if item.model.start >= gap_end - 0.001:
+                            item.model.start -= shift
                 self.update_clip_positions()
                 self.data_changed.emit()
             self.scene.removeItem(rect)
+            return True
+        return False
 
     def prompt_close_gap(self):
+        """Goal 5: Prompt via Metallic Dark Green/Red dialog for ripple shift."""
         msg = QMessageBox(self)
         msg.setWindowTitle("Gap Detected")
-        msg.setText("A gap was created! Would you like me to close the gap by shifting clips to the left?")
-        yes_btn = msg.addButton("Yes", QMessageBox.YesRole)
+        msg.setText("A gap was created!\nWould you like to ripple shift clips or leave the hole?")
+
+        msg.setStyleSheet("""
+            QMessageBox { background-color: #1A1A1A; border: 2px solid #333; }
+            QLabel { color: #E0E0E0; font-size: 14px; font-weight: bold; }
+        """)
+
+        yes_btn = msg.addButton("Yes, Ripple Shift", QMessageBox.YesRole)
+        yes_btn.setCursor(Qt.PointingHandCursor)
         yes_btn.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2E4D2E, stop:1 #0F1A0F);
-            color: #A0D0A0; border: 1px solid #050A05; font-weight: bold; padding: 10px;
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3D5A3D, stop:0.4 #2E4D2E, stop:1 #1B301B);
+                color: #A0D0A0; border: 2px solid #0A150A; border-radius: 4px; padding: 12px; font-weight: bold;
+                border-bottom: 4px solid #050A05;
+            }
+            QPushButton:hover { background: #3A5F3A; color: white; }
+            QPushButton:pressed { border-bottom: 1px solid #050A05; margin-top: 3px; }
         """)
-        no_btn = msg.addButton("No. Leave the gap as it is", QMessageBox.NoRole)
+
+        no_btn = msg.addButton("No, Leave the Gap", QMessageBox.NoRole)
+        no_btn.setCursor(Qt.PointingHandCursor)
         no_btn.setStyleSheet("""
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5C1A1A, stop:1 #240909);
-            color: #D0A0A0; border: 1px solid #120303; font-weight: bold; padding: 10px;
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7A2B2B, stop:0.4 #5C1A1A, stop:1 #3B0F0F);
+                color: #D0A0A0; border: 2px solid #1A0505; border-radius: 4px; padding: 12px; font-weight: bold;
+                border-bottom: 4px solid #120303;
+            }
+            QPushButton:hover { background: #8C3535; color: white; }
+            QPushButton:pressed { border-bottom: 1px solid #120303; margin-top: 3px; }
         """)
+
         msg.exec_()
         return msg.clickedButton() == yes_btn
 
     def drawForeground(self, painter, rect):
         vp_info = {'font': self.font()}
         self.painter_helper.draw_foreground(painter, rect, self.scale_factor, vp_info, self.playhead_pos)
+
+        selected = self.get_selected_item()
+        if selected and hasattr(selected.model, 'scene_cuts'):
+
+            scene_times = [t + selected.model.start for t in selected.model.scene_cuts]
+            self.painter_helper.draw_scene_markers(painter, rect, self.scale_factor, scene_times)
+
         if self.mode == Mode.RAZOR and hasattr(self, 'razor_mouse_x'):
+
             self.painter_helper.draw_razor_indicator(painter, rect, self.razor_mouse_x)
 
     def keyPressEvent(self, event):
+        """Goal 8: Aggressive seeking using Ctrl+Arrow keys."""
+
+        is_aggressive = event.modifiers() & Qt.ControlModifier
+        jump_delta = 3.0 if is_aggressive else 1.0
+
         if event.key() == Qt.Key_Left:
-            delta = -3.0 if event.modifiers() & Qt.ControlModifier else -1.0
-            self.seek_request.emit(delta)
+            self.logger.debug(f"[NAV] Seeking backward: {jump_delta}s")
+            self.seek_request.emit(-jump_delta)
             event.accept()
         elif event.key() == Qt.Key_Right:
-            delta = 3.0 if event.modifiers() & Qt.ControlModifier else 1.0
-            self.seek_request.emit(delta)
+            self.logger.debug(f"[NAV] Seeking forward: {jump_delta}s")
+            self.seek_request.emit(jump_delta)
             event.accept()
         elif event.key() == Qt.Key_Delete:
             if self.mw:
-                self.mw.clip_ctrl.delete_current()
+                if event.modifiers() & Qt.ShiftModifier:
+
+                    self.mw.clip_ctrl.ripple_delete_current()
+                else:
+                    self.mw.clip_ctrl.delete_current()
             event.accept()
         elif event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_K:
             item = self.get_selected_item()
@@ -159,7 +210,12 @@ class TimelineView(QGraphicsView):
             item = self.get_selected_item()
             if item and self.playhead_pos > item.model.start:
                 self.mw.save_state_for_undo()
-                new_dur = self.playhead_pos - item.model.start
+                next_clip_start = float('inf')
+                for other in self.scene.items():
+                    if isinstance(other, ClipItem) and other != item and other.track == item.track and other.model.start > item.model.start:
+                        next_clip_start = min(next_clip_start, other.model.start)
+                new_end = min(self.playhead_pos, next_clip_start)
+                new_dur = new_end - item.model.start
                 item.model.duration = max(0.1, new_dur)
                 if item.model.linked_uid:
                     for partner in self.scene.items():
@@ -169,12 +225,27 @@ class TimelineView(QGraphicsView):
                 self.data_changed.emit()
                 self.fit_to_view()
             event.accept()
+        elif event.key() == Qt.Key_C:
+
+            self.mode = Mode.RAZOR if self.mode == Mode.POINTER else Mode.POINTER
+            self.logger.info(f"[MODE] Switched to {self.mode.name}")
+
+            if hasattr(self, 'razor_mouse_x'):
+                delattr(self, 'razor_mouse_x')
+
+            if self.mw and hasattr(self.mw, 'inspector'):
+                self.mw.toggle_crop_mode(self.mode == Mode.RAZOR)
+            
+            self.viewport().update()
+            event.accept()
         else:
             super().keyPressEvent(event)
 
     def resizeEvent(self, event):
+        """Goal 18: Ensure scene is always large enough for the current content and zoom."""
         super().resizeEvent(event)
-        self.scene.setSceneRect(0, 0, max(3600*50, self.width()), self.num_tracks * self.track_height)
+        content_w = self.get_content_end() * self.scale_factor
+        self.scene.setSceneRect(0, 0, max(content_w + 10000, self.width()), self.num_tracks * self.track_height)
 
     def wheelEvent(self, event):
         if event.modifiers() & Qt.ControlModifier:
@@ -186,82 +257,221 @@ class TimelineView(QGraphicsView):
             super().wheelEvent(event)
 
     def mousePressEvent(self, event):
-        if self.mode == Mode.RAZOR and event.button() == Qt.LeftButton:
-            item = self.itemAt(event.pos())
+        if event.button() != Qt.LeftButton:
+            super().mousePressEvent(event)
+            return
+        item = self.itemAt(event.pos())
+        if isinstance(item, ClipItem):
+
+            if not item.isSelected():
+                self.is_dragging_clip = True
+                self.drag_start_pos = event.pos()
+                super().mousePressEvent(event)
+                self.drag_start_item_positions = {i: i.pos() for i in self.scene.selectedItems()}
+                self.interaction_started.emit()
+                return
+
+            item.update_handle_rects()
+            item_pos = item.mapFromScene(self.mapToScene(event.pos()))
+            is_bottom_half = item_pos.y() > (item.rect().height() / 2)
+            
+            if item.left_handle_rect.contains(item_pos):
+                self.active_resize_item = item
+
+                self.resize_drag_mode = 'fade_in' if is_bottom_half else 'left'
+                self.drag_start_pos = self.mapToScene(event.pos())
+                self.drag_start_geometry = (item.pos().x(), item.rect().width(), item.model.fade_in)
+                self.interaction_started.emit()
+                return
+            elif item.right_handle_rect.contains(item_pos):
+                self.active_resize_item = item
+                self.resize_drag_mode = 'fade_out' if is_bottom_half else 'right'
+                self.drag_start_pos = self.mapToScene(event.pos())
+                self.drag_start_geometry = (item.pos().x(), item.rect().width(), item.model.fade_out)
+                self.interaction_started.emit()
+                return
+                self.drag_start_pos = self.mapToScene(event.pos())
+                self.drag_start_geometry = (item.pos().x(), item.rect().width())
+                self.interaction_started.emit()
+                return
+            elif item.model.media_type != 'audio' and item.right_handle_rect.contains(item_pos):
+                self.active_resize_item = item
+                self.resize_drag_mode = 'right'
+                self.drag_start_pos = self.mapToScene(event.pos())
+                self.drag_start_geometry = (item.pos().x(), item.rect().width())
+                self.interaction_started.emit()
+                return
+            else:
+                self.is_dragging_clip = True
+                self.drag_start_pos = event.pos()
+                super().mousePressEvent(event)
+                self.drag_start_item_positions = {i: i.pos() for i in self.scene.selectedItems()}
+                self.interaction_started.emit()
+                return
+        if self.mode == Mode.RAZOR:
             if isinstance(item, ClipItem):
                 pt = self.mapToScene(event.pos())
                 snapped = self.get_snapped_x(pt.x(), track_idx=item.track)
                 self.clip_split_requested.emit(item, snapped / self.scale_factor)
             return
-        if event.button() == Qt.LeftButton:
-            item = self.itemAt(event.pos())
-            if isinstance(item, ClipItem):
-                self.is_dragging_clip = True
-                self.drag_start_pos = event.pos()
-                self.drag_start_item_pos = item.pos()
-                self.interaction_started.emit()
-                super().mousePressEvent(event)
-                return
-            px_scene = self.playhead_pos * self.scale_factor
-            px_vp = self.mapFromScene(QPointF(px_scene, 0)).x()
-            if abs(event.pos().x() - px_vp) < 10 or event.pos().y() < self.ruler_height:
-                self.is_dragging_playhead = True
-                self.interaction_started.emit()
-                self.user_set_playhead(self.mapToScene(event.pos()).x())
-                return
+        px_scene = self.playhead_pos * self.scale_factor
+        px_vp = self.mapFromScene(QPointF(px_scene, 0)).x()
+        if abs(event.pos().x() - px_vp) < 10 or event.pos().y() < self.ruler_height:
+            self.is_dragging_playhead = True
+            self.interaction_started.emit()
+            self.user_set_playhead(self.mapToScene(event.pos()).x())
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self.is_dragging_clip:
-            item = self.get_selected_item()
-            if item:
-                delta = self.mapToScene(event.pos()) - self.mapToScene(self.drag_start_pos)
-                raw_x = self.drag_start_item_pos.x() + delta.x()
-                new_x = self.get_snapped_x(raw_x, ignore_item=item) if self.snapping_enabled else raw_x
-                track = max(0, min(self.num_tracks - 1, round((self.drag_start_item_pos.y() + delta.y() - self.ruler_height) / self.track_height)))
-                new_y = (track * self.track_height) + self.ruler_height
-                collision = any(i for i in self.scene.items() if isinstance(i, ClipItem) and i != item and i.track == track and i.x() < new_x + item.rect().width() - 1 and i.x() + i.rect().width() > new_x + 1)
-                if not collision:
-                    item.setPos(QPointF(new_x, new_y))
-                    item.model.track, item.model.start = track, new_x / self.scale_factor
-                    item.is_colliding = False
-                    item.setToolTip("")
-                else:
-                    item.is_colliding = True
-                    item.setToolTip("LANE BLOCKED: Overlap not allowed.")
+        if self.is_dragging_clip or self.active_resize_item:
+            self.mw.playback.player.pause()
+        if self.active_resize_item:
+            item = self.active_resize_item
+            current_x_scene = self.mapToScene(event.pos()).x()
+            delta_x = current_x_scene - self.drag_start_pos.x()
+            start_x, start_w, start_fade = self.drag_start_geometry
+
+            frame_dur = 1.0 / 60.0
+            
+            if self.resize_drag_mode == 'fade_in':
+                delta_sec = (self.mapToScene(event.pos()).x() - item.pos().x()) / self.scale_factor
+
+                snapped_fade = round(delta_sec / frame_dur) * frame_dur
+                item.model.fade_in = max(0, min(snapped_fade, item.model.duration / 2))
                 item.update_cache()
-                item.update()
-        elif self.is_dragging_playhead:
+            elif self.resize_drag_mode == 'fade_out':
+                edge_x = item.pos().x() + item.rect().width()
+                delta_sec = (edge_x - self.mapToScene(event.pos()).x()) / self.scale_factor
+
+                snapped_fade = round(delta_sec / frame_dur) * frame_dur
+                item.model.fade_out = max(0, min(snapped_fade, item.model.duration / 2))
+                item.update_cache()
+            elif self.resize_drag_mode == 'right':
+                new_w = start_w + delta_x
+                next_clip_x = float('inf')
+                for other in self.scene.items():
+                    if isinstance(other, ClipItem) and other != item and other.track == item.track and other.pos().x() > item.pos().x():
+                        next_clip_x = min(next_clip_x, other.pos().x())
+                new_w = min(new_w, next_clip_x - item.pos().x())
+                new_w = max(10, new_w)
+
+                new_duration = round((new_w / self.scale_factor) / frame_dur) * frame_dur
+                source_playable_duration = (item.model.source_duration - item.model.source_in) * item.model.speed
+                if new_duration > source_playable_duration:
+                    item.model.end_freeze = new_duration - source_playable_duration
+                else:
+                    item.model.end_freeze = 0
+                item.model.duration = new_duration
+            elif self.resize_drag_mode == 'left':
+                new_x = start_x + delta_x
+                new_w = start_w - delta_x
+                prev_clip_end_x = float('-inf')
+                for other in self.scene.items():
+                    if isinstance(other, ClipItem) and other != item and other.track == item.track and other.pos().x() < item.pos().x():
+                        prev_clip_end_x = max(prev_clip_end_x, other.pos().x() + other.rect().width())
+                new_x = max(new_x, prev_clip_end_x)
+                new_w = (start_x + start_w) - new_x
+                new_w = max(10, new_w)
+                new_x = (start_x + start_w) - new_w
+                new_start = new_x / self.scale_factor
+                new_duration = new_w / self.scale_factor
+                delta_t = item.model.start - new_start
+                if (item.model.source_in + delta_t) < 0:
+                    item.model.start_freeze = -(item.model.source_in + delta_t)
+                    item.model.source_in = 0
+                else:
+                    item.model.start_freeze = 0
+                    item.model.source_in += delta_t
+                item.model.start = new_start
+                item.model.duration = new_duration
+            if item.model.linked_uid:
+                for other in self.scene.items():
+                    if isinstance(other, ClipItem) and other.uid == item.model.linked_uid:
+                        other.model.start = item.model.start
+                        other.model.duration = item.model.duration
+                        other.model.source_in = item.model.source_in
+                        other.model.start_freeze = item.model.start_freeze
+                        other.model.end_freeze = item.model.end_freeze
+                        break
+            self.update_clip_positions()
+            self.data_changed.emit()
+            return
+        if self.is_dragging_clip:
+            selection = list(self.drag_start_item_positions.keys())
+            if not selection: return
+            self.mw.playback.player.pause()
+            main_item = selection[0]
+            main_item_start_pos = self.drag_start_item_positions[main_item]
+            raw_delta_x = self.mapToScene(event.pos()).x() - self.drag_start_pos.x()
+            raw_x = main_item_start_pos.x() + raw_delta_x
+            if self.snapping_enabled:
+                snapped_x = self.get_snapped_x(raw_x, ignore_items=selection)
+                raw_delta_x = snapped_x - main_item_start_pos.x()
+            can_move = True
+            for item in selection:
+                start_pos = self.drag_start_item_positions[item]
+                new_x = start_pos.x() + raw_delta_x
+                for other in self.scene.items():
+                    if isinstance(other, ClipItem) and other not in selection and other.track == item.track:
+                        if (new_x < other.x() + other.rect().width()) and (new_x + item.rect().width() > other.x()):
+                            can_move = False
+                            break
+                if not can_move:
+                    break
+            if can_move:
+                for item in selection:
+                    start_pos = self.drag_start_item_positions[item]
+                    new_x = start_pos.x() + raw_delta_x
+
+                    snapped_start = round((new_x / self.scale_factor) / frame_dur) * frame_dur
+                    item.setPos(snapped_start * self.scale_factor, start_pos.y())
+                    item.model.start = snapped_start
+                    item.update_cache()
+                    item.update()
+            return
+        if self.is_dragging_playhead:
             self.user_set_playhead(self.mapToScene(event.pos()).x())
         elif self.mode == Mode.RAZOR:
-            raw_x = self.mapToScene(event.pos()).x()
-            self.razor_mouse_x = self.get_snapped_x(raw_x)
+
+            scene_pos = self.mapToScene(event.pos())
+
+            self.razor_mouse_x = self.get_snapped_x(scene_pos.x()) if self.snapping_enabled else scene_pos.x()
             self.viewport().update()
-        else:
-            super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self.active_resize_item:
+            self.update_clip_positions()
+            self.active_resize_item = None
+            self.interaction_ended.emit()
+            self.data_changed.emit()
+            return
         if self.is_dragging_clip:
             self.is_dragging_clip = False
             if self.snap_line:
                 self.scene.removeItem(self.snap_line)
                 self.snap_line = None
-            item = self.get_selected_item()
-            if item:
+            for item in self.get_selected_items():
                 item.is_colliding = False
                 item.setToolTip("")
-                colliding_items = [i for i in self.scene.items() if isinstance(i, ClipItem) and i != item and i.track == item.track and i.collidesWithItem(item)]
-                if colliding_items:
-                    target = colliding_items[0]
-                    if item.x() + (item.rect().width() / 2) < target.x() + (target.rect().width() / 2):
-                        new_x = target.x() - item.rect().width()
-                    else:
-                        new_x = target.x() + target.rect().width()
-                    item.setX(max(0, new_x))
                 item.model.start = item.x() / self.scale_factor
                 item.update_cache()
                 item.update()
             self.compact_lanes()
+            
+        if self.is_dragging_playhead:
+            self.is_dragging_playhead = False
+
+            if self.mw:
+                self.mw.playback.mark_dirty(serious=True)
+            if self.snap_line:
+                self.scene.removeItem(self.snap_line)
+            self.interaction_ended.emit()
+        if self.is_dragging_playhead:
+            self.is_dragging_playhead = False
+            if self.snap_line:
+                self.scene.removeItem(self.snap_line)
+                self.snap_line = None
             self.interaction_ended.emit()
 
     def contextMenuEvent(self, event):
@@ -330,17 +540,22 @@ class TimelineView(QGraphicsView):
             if isinstance(item, ClipItem):
                 item.scale = self.scale_factor
                 item.setPos(item.model.start * self.scale_factor, item.model.track * self.track_height + 30)
-                item.setRect(0, 0, item.model.duration * self.scale_factor, 30)
+                total_duration = item.model.duration + item.model.start_freeze + item.model.end_freeze
+                item.setRect(0, 0, total_duration * self.scale_factor, 30)
 
     def user_set_playhead(self, x):
+        """Goal 8: Scrubbing with dynamic scene expansion to nuke the 10-minute limit."""
         sec = max(0, x / self.scale_factor)
+
+        if x >= self.scene.width() - 50:
+            self.scene.setSceneRect(0, 0, x + 10000, self.scene.height())
+
         self.playhead_pos = sec
         self.viewport().update()
-        px = sec * self.scale_factor
-        val = self.horizontalScrollBar().value()
-        viewport_w = self.viewport().width()
-        if px > val + viewport_w - 50:
-            self.horizontalScrollBar().setValue(int(px - viewport_w + 100))
+        px, val, vw = sec * self.scale_factor, self.horizontalScrollBar().value(), self.viewport().width()
+        
+        if px > val + vw - 50:
+            self.horizontalScrollBar().setValue(int(px - vw + 100))
         elif px < val:
             self.horizontalScrollBar().setValue(int(px - 100))
         self.time_updated.emit(sec)
@@ -354,7 +569,7 @@ class TimelineView(QGraphicsView):
         val = self.horizontalScrollBar().value()
         viewport_w = self.viewport().width()
         if px > val + viewport_w - 50:
-             self.horizontalScrollBar().setValue(int(px - 50))
+            self.horizontalScrollBar().setValue(int(px - 50))
 
     def set_visual_time(self, sec):
         """Updates playhead without emitting time_updated to prevent player seek loops."""
@@ -367,17 +582,29 @@ class TimelineView(QGraphicsView):
         elif px < val:
             self.horizontalScrollBar().setValue(int(px - 100))
 
-    def fit_to_view(self):
+    def fit_to_view(self, force=False):
+        """Goal 18: Intelligent scaling that respects user zoom locks."""
+        if self.zoom_locked and not force:
+            self.logger.debug("[ZOOM] fit_to_view blocked by user lock.")
+            return
+
         items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
-        self.logger.info(f"fit_to_view called with {len(items)} items.")
-        if not items: return
+        if not items: 
+            return
+
         start = min(i.model.start for i in items)
         end = max(i.model.start + i.model.duration for i in items)
-        dur = end - start
-        if dur > 0 and self.viewport().width() > 100:
-            self.scale_factor = (self.viewport().width() - 100) / dur
+        duration = end - start
+
+        if duration > 0 and self.viewport().width() > 100:
+
+            margin = self.viewport().width() * 0.05
+            available_width = self.viewport().width() - (margin * 2)
+            
+            self.scale_factor = available_width / duration
             self.update_clip_positions()
-            self.horizontalScrollBar().setValue(int(start * self.scale_factor))
+            self.horizontalScrollBar().setValue(int(start * self.scale_factor - margin))
+            self.logger.info(f"[ZOOM] Auto-fit complete. New scale: {self.scale_factor:.2f}")
 
     def add_clip(self, clip_data):
         model = clip_data if isinstance(clip_data, ClipModel) else ClipModel.from_dict(clip_data)
@@ -437,9 +664,10 @@ class TimelineView(QGraphicsView):
             sel = scene.selectedItems()
         except RuntimeError:
             return
-        if sel and isinstance(sel[0], ClipItem):
-            self.clip_selected.emit(sel[0])
-            self.track_headers.set_selected(sel[0].track)
+        if sel:
+            self.clip_selected.emit(sel)
+            if isinstance(sel[0], ClipItem):
+                self.track_headers.set_selected(sel[0].track)
         else:
-            self.clip_selected.emit(None)
+            self.clip_selected.emit([])
             self.track_headers.set_selected(-1)

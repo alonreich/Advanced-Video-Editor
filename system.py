@@ -23,14 +23,11 @@ def setup_system(base_dir):
     fmt = logging.Formatter('%(asctime)s | %(name)-10s | %(levelname)-8s | %(message)s')
     logger = logging.getLogger("Advanced_Video_Editor")
     logger.setLevel(logging.DEBUG)
-    f_path = os.path.join(log_dir, 'Advanced_Video_Editor.log')
-    f_handler = RotatingFileHandler(f_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
-    f_handler.setFormatter(fmt)
-    logger.addHandler(f_handler)
-    f_path2 = os.path.join(log_dir2, 'Advanced_Video_Editor.log')
-    f_handler2 = RotatingFileHandler(f_path2, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
-    f_handler2.setFormatter(fmt)
-    logger.addHandler(f_handler2)
+    for d in [log_dir, log_dir2]:
+        f_path = os.path.join(d, 'Advanced_Video_Editor.log')
+        h = RotatingFileHandler(f_path, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+        h.setFormatter(fmt)
+        logger.addHandler(h)
     return logger
 
 class ConfigManager:

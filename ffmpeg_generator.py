@@ -15,65 +15,110 @@ class FilterGraphGenerator:
         filter_parts = []
         render_end = start_time + (duration if duration else 99999)
         raw_clips = [c for c in self.clips if c['start'] < render_end and (c['start'] + c['dur']) > start_time]
+        occluders = []
         for c in raw_clips:
+            is_full_screen = (c.get('scale_x', 1.0) >= 1.0 and c.get('scale_y', 1.0) >= 1.0 and 
+                              c.get('crop_x1', 0.0) == 0.0 and c.get('crop_y1', 0.0) == 0.0 and 
+                              c.get('crop_x2', 1.0) == 1.0 and c.get('crop_y2', 1.0) == 1.0)
+            is_opaque = c.get('opacity', 1.0) >= 1.0
+            if is_full_screen and is_opaque and c.get('width', 0) > 0:
+                occluders.append({'start': c['start'], 'end': c['start'] + c['dur'], 'track': c['track']})
             path = c.get('path')
             if not path:
                 continue
+
             norm = path.replace('\\', '/')
+
+            escaped_path = norm.replace("'", "'\\''")
+            
             if norm not in file_map:
                 file_map[norm] = len(inputs)
                 inputs.append(norm)
+
+            c['escaped_path'] = escaped_path
         if not inputs:
             total_duration = duration if duration else 10.0
-            filter_str = (
-                f"color=c=black:s={self.w}x{self.h}:d={total_duration}[vo]" +
-                f";anullsrc=channel_layout=stereo:sample_rate=44100[ao]"
-            )
-            return [], filter_str, "[vo]", "[ao]", False
-        sorted_by_layer = sorted([c for c in raw_clips if c.get('width', 0) > 0], key=lambda x: -x['track'])
-        visible_video = []
-        for clip in sorted_by_layer:
-            is_occluded = False
-            for higher in visible_video:
-                if higher['track'] <= clip['track']:
-                    continue
-                higher_end = higher['start'] + higher['dur']
-                clip_end = clip['start'] + clip['dur']
-                time_covered = (higher['start'] <= clip['start'] and higher_end >= clip_end)
-                is_cropped = (higher.get('crop_x1', 0.0) > 0.001 or higher.get('crop_y1', 0.0) > 0.001 or 
-                              higher.get('crop_x2', 1.0) < 0.999 or higher.get('crop_y2', 1.0) < 0.999)
-                is_full_screen = (not is_cropped and 
-                                  higher.get('scale_x', 1.0) >= 1.0 and higher.get('scale_y', 1.0) >= 1.0 and
-                                  abs(higher.get('pos_x', 0)) < 0.001 and abs(higher.get('pos_y', 0)) < 0.001)
-                if time_covered and is_full_screen and higher.get('opacity', 1.0) >= 0.99:
-                    fade_in_end = higher['start'] + higher.get('fade_in', 0)
-                    fade_out_start = higher_end - higher.get('fade_out', 0)
-                    if clip['start'] >= fade_in_end and (clip['start'] + clip['dur']) <= fade_out_start:
-                        is_occluded = True
-                        self.logger.info(f"[OCCLUSION] Dropping hidden clip {clip['uid']} (covered by {higher['uid']})")
-                        break
-            if not is_occluded:
-                visible_video.append(clip)
+            return [], "", "[vo]", "[ao]", False
+
+        visible_video = [c for c in raw_clips if c.get('width', 0) > 0]
+
+        sorted_by_layer = sorted(visible_video, key=lambda x: -x['track'])
+        occluded_uids = set()
+        
+        for i, lower_clip in enumerate(visible_video):
+            l_start = lower_clip['start']
+            l_end = l_start + lower_clip['dur']
+
+            visible_intervals = [(l_start, l_end)]
+
+            for top_clip in [c for c in visible_video if c['track'] < lower_clip['track']]:
+                is_occluder = (top_clip.get('scale_x', 1.0) >= 1.0 and 
+                               top_clip.get('scale_y', 1.0) >= 1.0 and 
+                               top_clip.get('opacity', 1.0) >= 1.0 and
+                               top_clip.get('crop_x1', 0.0) == 0.0 and 
+                               top_clip.get('crop_y1', 0.0) == 0.0)
+                
+                if is_occluder:
+                    t_start, t_end = top_clip['start'], top_clip['start'] + top_clip['dur']
+                    new_intervals = []
+                    for v_start, v_end in visible_intervals:
+
+                        if t_start <= v_start and t_end >= v_end:
+                            continue
+                        elif t_start > v_start and t_end < v_end:
+                            new_intervals.extend([(v_start, t_start), (t_end, v_end)])
+                        elif t_start <= v_start and t_end > v_start:
+                            new_intervals.append((t_end, v_end))
+                        elif t_start < v_end and t_end >= v_end:
+                            new_intervals.append((v_start, t_start))
+                        else:
+                            new_intervals.append((v_start, v_end))
+                    visible_intervals = new_intervals
+                if not visible_intervals: break
+
+            if not visible_intervals or sum(e - s for s, e in visible_intervals) < 0.033:
+                occluded_uids.add(lower_clip['uid'])
+
+        visible_video = [c for c in visible_video if c['uid'] not in occluded_uids]
+        if occluded_uids:
+            self.logger.info(f"[RENDER] Occlusion aware: Dropped {len(occluded_uids)} hidden clips from graph.")
+
+        video_clips = sorted(visible_video, key=lambda x: (-x['track'], x['start']))
+        video_stream_counters = {idx: 0 for idx in file_map.values()}
         audio_clips = [c for c in raw_clips if c.get('has_audio', True)]
         main_input_used_for_video = False
         if inputs:
             p0 = inputs[0]
             main_input_used_for_video = any(c['path'].replace('\\', '/') == p0 for c in visible_video)
-        video_clips = sorted(visible_video, key=lambda x: (x['track'], x['start']))
+        
+        video_stream_usage = {}
+        for clip in video_clips:
+            idx = file_map[clip['path'].replace('\\', '/')]
+            video_stream_usage[idx] = video_stream_usage.get(idx, 0) + 1
         total_dur = max([c['start'] + c['dur'] for c in self.clips], default=10)
         filter_parts.append(f"color=c=black:s={self.w}x{self.h}:d={total_dur+5:.3f}[base]")
         last_v = "[base]"
         for i, clip in enumerate(video_clips):
             idx = file_map[clip['path'].replace('\\', '/')]
+            if video_stream_usage.get(idx, 0) > 1:
+                n = video_stream_counters[idx]
+                input_stream = f"[vid_{idx}_{n}]"
+                video_stream_counters[idx] += 1
+            else:
+                input_stream = f"[{idx}:v]"
             lbl = f"v{i}"
             speed = float(clip['speed'])
-            input_label = f"raw_v{i}"
-            filter_parts.insert(0, f"[{idx}:v]null[{input_label}]")
             chain = [
-                f"[{input_label}]trim=start={clip['source_in']}:duration={clip['dur'] * speed}",
+                f"{input_stream}trim=start={clip['source_in']}:duration={clip['dur'] * speed}",
                 "setpts=PTS-STARTPTS",
                 f"setpts=PTS*{1/speed:.6f}"
             ]
+            start_freeze = clip.get('start_freeze', 0.0)
+            if start_freeze > 0:
+                chain.append(f"tpad=start_mode=clone:start_duration={start_freeze}")
+            end_freeze = clip.get('end_freeze', 0.0)
+            if end_freeze > 0:
+                chain.append(f"tpad=stop_mode=clone:stop_duration={end_freeze}")
             if clip.get('crop_x2', 1) - clip.get('crop_x1', 0) < 0.99:
                 cw = f"iw*({clip['crop_x2']}-{clip['crop_x1']})"
                 ch = f"ih*({clip['crop_y2']}-{clip['crop_y1']})"
@@ -94,7 +139,7 @@ class FilterGraphGenerator:
             target_h = int(self.h * clip.get('scale_y', 1.0))
             chain.append(
                 f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black@0"
+                f"pad={self.w}:{self.h}:(ow-iw)/2:(oh-ih)/2:color=black@0"
             )
             if is_export:
                 chain.append("setsar=1")
@@ -109,10 +154,15 @@ class FilterGraphGenerator:
                 continue
             idx = file_map[clip['path'].replace('\\', '/')]
             audio_stream_usage[idx] = audio_stream_usage.get(idx, 0) + 1
-        for idx, n in audio_stream_usage.items():
-            if n > 1:
-                outs = "".join([f"[aud_{idx}_{k}]" for k in range(n)])
-                filter_parts.insert(0, f"[{idx}:a]asplit={n}{outs}")
+
+        for idx, count in audio_stream_usage.items():
+            if count > 1:
+
+                outputs = "".join([f"[src_aud_{idx}_{k}]" for k in range(count)])
+                filter_parts.insert(0, f"[{idx}:a]asplit={count}{outputs}")
+            else:
+
+                pass
         audio_stream_counters = {idx: 0 for idx in audio_stream_usage}
         audio_outs = []
         for i, clip in enumerate(audio_clips):
@@ -126,10 +176,22 @@ class FilterGraphGenerator:
             else:
                 src = f"[{input_idx}:a]"
             audio_pad = f"[a{i}_out]"
-            vol = (clip.get('volume', 100) / 100.0) * self.vols.get(clip['track'], 1.0)
+            base_vol = (clip.get('volume', 100) / 100.0) * self.vols.get(clip['track'], 1.0)
+
+            is_vo = "VO_" in clip.get('name', '') or clip.get('track') == -1
+            duck_filter = ""
+            if not is_vo:
+                for vo_clip in [c for c in audio_clips if "VO_" in c.get('name', '') or c.get('track') == -1]:
+                    vo_start = vo_clip['start']
+                    vo_end = vo_start + vo_clip['dur']
+
+                    duck_filter = f",volume=0.18:enable='between(t,{vo_start},{vo_end})'"
+            
+            vol_str = f"volume={base_vol:.2f}{duck_filter}"
             speed = float(clip.get('speed', 1.0))
+            src_duration = clip['dur'] * speed
             audio_chain = [
-                f"{src}atrim=start={clip['source_in']}:duration={clip['dur']}",
+                f"{src}atrim=start={clip['source_in']}:duration={src_duration:.6f}",
                 "asetpts=PTS-STARTPTS",
             ]
             if speed != 1.0:
@@ -146,7 +208,7 @@ class FilterGraphGenerator:
                 if atempo_filters:
                     audio_chain.append(",".join(atempo_filters))
             audio_chain.extend([
-                f"volume={vol:.2f}",
+                vol_str,
                 f"adelay={int(clip['start'] * 1000)}:all=1{audio_pad}"
             ])
             filter_parts.append(",".join(audio_chain))

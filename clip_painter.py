@@ -45,9 +45,12 @@ class ClipPainter:
         full_w = src_dur * scale
         x_offset = -(model.source_in * scale)
         painter.save()
+
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.setClipRect(0, 0, int(rect.width()), int(rect.height()))
         painter.setOpacity(0.8)
-        painter.drawPixmap(int(x_offset), 0, int(full_w), int(rect.height()), pixmap)
+        target = QRectF(x_offset, 0, full_w, rect.height())
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
         painter.restore()
 
     @staticmethod
@@ -85,6 +88,21 @@ class ClipPainter:
             g.setColorAt(0, QColor(0,0,0,0))
             g.setColorAt(1, QColor(0,0,0,200))
             painter.fillRect(QRectF(x_s, 0, fo_w, rect.height()), g)
+
+    @staticmethod
+    def draw_trim_handles(painter, rect):
+        """Goal 8: Split-zone handles. Top=Trim/Freeze, Bottom=Fade."""
+        w = 10
+        h = int(rect.height())
+        half_h = h // 2
+
+        painter.setBrush(QColor(255, 255, 0, 150))
+        painter.drawRect(0, 0, w, half_h)
+        painter.drawRect(int(rect.width() - w), 0, w, half_h)
+
+        painter.setBrush(QColor(0, 255, 255, 180))
+        painter.drawRect(0, half_h, w, half_h)
+        painter.drawRect(int(rect.width() - w), half_h, w, half_h)
 
     @staticmethod
     def draw_proxy_indicator(painter, rect):

@@ -2,7 +2,7 @@ import time
 import logging
 from PyQt5.QtWidgets import QGraphicsRectItem, QGraphicsItem, QGraphicsDropShadowEffect
 from PyQt5.QtGui import QColor, QPixmap, QPainter, QFont, QPen
-from PyQt5.QtCore import Qt, QPointF
+from PyQt5.QtCore import Qt, QPointF, QRectF
 from model import ClipModel
 from clip_painter import ClipPainter
 
@@ -38,12 +38,29 @@ class ClipItem(QGraphicsRectItem):
         self.thumbnail_end = None
         self.drag_mode = None
         self.is_colliding = False
+        self.handle_width = 8
         self.update_cache()
+
+    def update_handle_rects(self):
+        self.left_handle_rect = QRectF(0, 0, self.handle_width, self.rect().height())
+        self.right_handle_rect = QRectF(self.rect().width() - self.handle_width, 0, self.handle_width, self.rect().height())
 
     def hoverEnterEvent(self, event):
         self.setToolTip(f"{self.model.name}\nDuration: {self.model.duration:.2f}s")
-        self.setCursor(Qt.PointingHandCursor)
         super().hoverEnterEvent(event)
+
+    def hoverMoveEvent(self, event):
+        if self.model.media_type == 'audio':
+            self.setCursor(Qt.PointingHandCursor)
+            super().hoverMoveEvent(event)
+            return
+        self.update_handle_rects()
+        pos = event.pos()
+        if self.left_handle_rect.contains(pos) or self.right_handle_rect.contains(pos):
+            self.setCursor(Qt.SizeHorCursor)
+        else:
+            self.setCursor(Qt.PointingHandCursor)
+        super().hoverMoveEvent(event)
 
     def hoverLeaveEvent(self, event):
         self.setToolTip("")
@@ -66,16 +83,19 @@ class ClipItem(QGraphicsRectItem):
         self.cached_pixmap.fill(Qt.transparent)
         painter = QPainter(self.cached_pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        is_audio = getattr(self.model, 'media_type', 'video') == 'audio'
+        is_audio = self.model.media_type == 'audio'
         is_out_of_sync = False
-        if self.model.linked_uid:
+        if self.model.linked_uid and self.scene():
+
             for item in self.scene().items():
                 if isinstance(item, ClipItem) and item.uid == self.model.linked_uid:
                     if abs(item.model.start - self.model.start) > 0.001:
                         is_out_of_sync = True
-                    break
+                        break
         ClipPainter.draw_base_rect(painter, rect, is_audio, is_out_of_sync, self.is_colliding)
         ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
+        if not is_audio:
+            ClipPainter.draw_trim_handles(painter, rect)
         ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
         ClipPainter.draw_fades(painter, rect, self.model, self.scale)
         ClipPainter.draw_selection_border(painter, rect, self.isSelected(), is_out_of_sync)
@@ -95,9 +115,35 @@ class ClipItem(QGraphicsRectItem):
         self._is_interacting = True
         super().mousePressEvent(event)
 
+    def mouseReleaseEvent(self, event):
+        self._is_interacting = False
+        self.update_cache()
+        super().mouseReleaseEvent(event)
+
     def set_speed(self, speed):
+        """Goal 2: Change speed with strict bidirectional collision detection."""
+
+        source_dur = self.model.duration * self.model.speed
+        new_dur = source_dur / speed
+        new_start = self.model.start
+        new_end = new_start + new_dur
+
+        if self.scene():
+            for item in self.scene().items():
+
+                if isinstance(item, ClipItem) and item != self and item.track == self.track:
+                    n_start = item.model.start
+                    n_end = n_start + item.model.duration
+
+                    if (new_start < n_end - 0.001) and (new_end > n_start + 0.001):
+                        self.logger.warning(f"[COLLISION] Speed change blocked. Overlap with '{item.name}' [{n_start:.2f}s - {n_end:.2f}s]")
+                        return
+
         self.speed = speed
         self.model.speed = speed
+        self.model.duration = new_dur
+        self.duration = new_dur
+        self.setRect(0, 0, new_dur * self.scale, 40)
         self.update_cache()
 
     def set_volume(self, volume):

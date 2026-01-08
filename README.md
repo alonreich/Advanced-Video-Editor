@@ -10,9 +10,9 @@
 
 2.  PRIMARY GOALS & SUCCESS CRITERIA
     The system provides real-time editing performance via hardware-specific 
-    [cite_start]encoders while preventing invalid timeline states by design [cite: 32-36]. 
+   encoders while preventing invalid timeline states by design. 
     Success is defined by zero timeline corruption and a keyboard-first workflow 
-    [cite_start]that minimizes user friction [cite: 176-178].
+   that minimizes user friction.
 
 3.  TARGET USERS
     Designed for technical content creators and power editors who require 
@@ -23,18 +23,18 @@
     The interface initializes with two lanes, utilizing a vertical scrollbar 
     for expansion beyond four lanes. Clips are treated as solid objects and 
     are strictly forbidden from overlapping within the same lane; any collision 
-    [cite_start]physically blocks movement and triggers a visual "Blocked" warning [cite: 512-514].
+   physically blocks movement and triggers a visual "Blocked" warning.
 
 5.  MAGNETIC SNAPPING & GAP DETECTION
     Magnetic snapping is absolute, with the playhead receiving 2x magnetism (40px) 
     to ensure frame-perfect alignment. Upon clip deletion, the system highlights 
     the created gap in red and prompts the user via a Metallic Dark Green/Red 
-    [cite_start]dialog to decide whether to ripple shift clips or leave the hole [cite: 494-496, 61].
+   dialog to decide whether to ripple shift clips or leave the hole.
 
 6.  HARDWARE GPU ACCELERATION
     The engine auto-detects hardware-specific encoders (h264_nvenc, h264_qsv, 
     or h264_amf) to offload all rendering and effects processing from the CPU 
-    [cite_start][cite: 32-36]. This ensures smooth, real-time playback even with complex 
+   . This ensures smooth, real-time playback even with complex 
     filter graphs.
 
 7.  AUDIO & VOICEOVER INTEGRATION
@@ -46,37 +46,37 @@
 8.  ADVANCED NAVIGATION & SHORTCUTS
     Implemented shortcuts: Ctrl+K for track splitting, '[' for start-trim, 
     ']' for end-trim, and 'C' for entering interactive Crop mode. Navigation 
-    [cite_start]uses arrow keys for frame stepping and Ctrl+Arrow for aggressive seeking [cite: 497-498].
+   uses arrow keys for frame stepping and Ctrl+Arrow for aggressive seeking.
 
 9.  DATA SAFETY & CRASH RECOVERY
     The system maintains a 50-step undo history and utilizes continuous 
     background auto-saving to project files. A global exception hook manages 
     recovery by attempting to restore state from an emergency sidecar log 
-    [cite_start]during fatal crashes [cite: 1-2].
+   during fatal crashes.
 
 10. VISUAL INSPECTOR & PROJECT SETTINGS
     A dedicated Clip Inspector manages metadata, speed, and volume. The 
     application supports switching between Landscape and Portrait modes, with 
     out-of-bounds media rendered at 50% transparency for editing clarity 
-    [cite_start][cite: 169-170, 266-267].
+   .
 
 11. FIFO PROJECT MANAGEMENT
     The system enforces a strict 10-project storage limit, automatically 
-    [cite_start]nuking the oldest directory using FIFO logic to prevent drive saturation [cite: 338-340].
+   nuking the oldest directory using FIFO logic to prevent drive saturation.
 
 12. SMART HISTORY COMPRESSION
     The UndoStack utilizes delta-based "Smart Push" logic to store only 
     granular modifications, preventing memory bloat during high-intensity 
-    [cite_start]editing sessions [cite: 117-120].
+   editing sessions.
 
 13. UIPI ELEVATION WORKAROUND
     Implements user32.dll message filters to ensure drag-and-drop functionality 
     remains operational even if the process is running with elevated Admin 
-    [cite_start]privileges [cite: 2-3].
+   privileges.
 
 14. HARDWARE-ACCELERATED THUMBNAILING
     The ThumbnailWorker hijacks CUDA or QSV hardware to offload preview 
-    [cite_start]generation [cite: 556-557], ensuring the UI remains responsive while 
+   generation, ensuring the UI remains responsive while 
     importing large media batches.
 
 15. OCCLUSION-AWARE RENDERING
@@ -85,11 +85,11 @@
 
 16. INTERACTIVE VISUAL TRANSFORMS
     A SafeOverlay provides direct on-preview handles for real-time manipulation 
-    [cite_start]of clip scale, position, and crop parameters with center-snapping guides [cite: 268-271, 295].
+   of clip scale, position, and crop parameters with center-snapping guides.
 
 17. AUTOMATIC DLL PATCHING
     The BinaryManager automatically clones libmpv-2.dll to mpv-1.dll on boot 
-    [cite_start]to resolve Windows-specific backend compatibility issues [cite: 27-28].
+   to resolve Windows-specific backend compatibility issues.
 
 18. VERTICAL VIEW SYNCHRONIZATION
     The TimelineContainer enforces strict vertical alignment between track 

@@ -50,8 +50,7 @@ if __name__ == "__main__":
     sys.stdout = StreamToLogger(logger, logging.INFO)
     sys.stderr = StreamToLogger(logger, logging.ERROR)
     logger.info("=== Booting Advanced Video Editor ===")
-    logger.info("Ensuring binaries...")
-    BinaryManager.ensure_env()
+
     logger.info("Importing MainWindow...")
     from main_window import MainWindow
     logger.info("Creating QApplication...")
@@ -75,7 +74,8 @@ if __name__ == "__main__":
     app.setPalette(p)
     try:
         logger.info("Creating MainWindow...")
-        window = MainWindow(base_dir)
+        file_to_load = sys.argv[1] if len(sys.argv) > 1 else None
+        window = MainWindow(base_dir, file_to_load=file_to_load)
         logger.info("Showing MainWindow...")
         window.show()
         native_hwnd = window.winId().__int__()

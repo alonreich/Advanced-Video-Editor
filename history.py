@@ -22,16 +22,15 @@ class UndoStack:
             self.redo_stack.clear()
             updated_state_map = {}
             for uid, data in new_state_map.items():
+
                 if uid in command['added'] or uid in command['modified']:
-                    updated_state_map[uid] = copy.deepcopy(data)
+                    updated_state_map[uid] = data.copy()
                 else:
                     updated_state_map[uid] = self.current_state_map.get(uid, data)
             self.current_state_map = updated_state_map
             if len(self.undo_stack) > self.max_depth:
                 self.undo_stack.pop(0)
             self.logger.debug(f"[HISTORY] Smart Push: +{len(command['added'])} -{len(command['removed'])} ~{len(command['modified'])}")
-        except Exception as e:
-            self.logger.error(f"Failed to push state: {e}")
         except Exception as e:
             self.logger.error(f"Failed to push undo state: {e}", exc_info=True)
 
@@ -73,17 +72,18 @@ class UndoStack:
         cmd = {'added': {}, 'removed': {}, 'modified': {}}
         for uid, data in old_map.items():
             if uid not in new_map:
-                cmd['removed'][uid] = copy.deepcopy(data)
+                cmd['removed'][uid] = data.copy()
         for uid, new_data in new_map.items():
             if uid not in old_map:
-                cmd['added'][uid] = copy.deepcopy(new_data)
+                cmd['added'][uid] = new_data.copy()
             else:
                 old_data = old_map[uid]
                 changes = {}
                 for key, new_val in new_data.items():
                     old_val = old_data.get(key)
                     if old_val != new_val:
-                        changes[key] = {'old': copy.deepcopy(old_val), 'new': copy.deepcopy(new_val)}
+
+                        changes[key] = {'old': old_val, 'new': new_val}
                 if changes:
                     cmd['modified'][uid] = changes
         return cmd

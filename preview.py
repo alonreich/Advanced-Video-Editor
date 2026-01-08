@@ -43,6 +43,8 @@ class SafeOverlay(QWidget):
         self.handles = []
         self.handle_size = 14
         self.dash_offset = 0
+        self.is_loading = False
+        self.loading_angle = 0
         self.is_recording = False
         self.target_res = (1920, 1080)
         self.mode = "Landscape"
@@ -52,8 +54,7 @@ class SafeOverlay(QWidget):
         self.is_snapped_x = False
         self.is_snapped_y = False
         self.backup_crop = {}
-        self.btn_confirm = QPushButton("Confirm", self)
-        self.btn_confirm = QPushButton("âœ” APPLY CROP", self)
+        self.btn_confirm = QPushButton("✔ APPLY CROP", self)
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
         self.btn_confirm.setToolTip("Apply crop adjustments")
         self.btn_confirm.clicked.connect(self.confirm_crop)
@@ -157,12 +158,19 @@ class SafeOverlay(QWidget):
         return norm_x, norm_y
 
     def paintEvent(self, e):
+        """Goal 10: Renders out-of-bounds media at 50% transparency for editing clarity."""
         super().paintEvent(e)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+  
         v_rect = self.get_video_rect()
+
         if self.mode == "Portrait":
             self.draw_portrait_guides(p, v_rect)
+
+        p.save()
+        p.setClipRect(v_rect)
+        
         if self.is_recording:
             p.setBrush(QColor(255, 0, 0))
             p.setPen(Qt.NoPen)
@@ -177,7 +185,18 @@ class SafeOverlay(QWidget):
                 p.drawLine(int(v_rect.center().x()), int(v_rect.top()), int(v_rect.center().x()), int(v_rect.bottom()))
             if self.is_snapped_y:
                 p.drawLine(int(v_rect.left()), int(v_rect.center().y()), int(v_rect.right()), int(v_rect.center().y()))
-        p.setClipRect(v_rect)
+        
+        if self.is_loading:
+            p.save()
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(QPen(QColor(0, 255, 255), 4, Qt.SolidLine, Qt.RoundCap))
+            center = v_rect.center()
+            spinner_rect = QRectF(center.x() - 25, center.y() - 25, 50, 50)
+            self.loading_angle = (self.loading_angle + 10) % 360
+            p.drawArc(spinner_rect, -self.loading_angle * 16, 120 * 16)
+            p.restore()
+            self.update()
+
         if self.crop_mode:
             self.draw_crop_controls(p, v_rect)
         else:
@@ -427,14 +446,15 @@ class PreviewWidget(QWidget):
         layout.addWidget(self.container)
 
     def set_player(self, player):
+
         self.player = player
         self.container.layout().addWidget(player)
         if not self.player.winId():
             self.player.createWinId()
+        
         self.player.initialize_mpv(wid=int(self.player.winId()))
-        self.overlay.setParent(player)
-        self.overlay.stackUnder(None)
-        self.overlay.setGeometry(player.rect())
+        self.overlay.setParent(self.player)
+        self.overlay.raise_()
         self.overlay.show()
         ctrl_layout = QHBoxLayout()
         ctrl_layout.setContentsMargins(5, 5, 5, 5)

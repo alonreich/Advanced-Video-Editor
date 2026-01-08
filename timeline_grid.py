@@ -1,10 +1,12 @@
-from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPixmap, QPainter
+from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPixmap, QPainter, QFont
 from PyQt5.QtCore import QRectF, QPointF, Qt
 
 class TimelineGridPainter:
     def __init__(self, ruler_height=30):
         self.ruler_height = ruler_height
         self._cache = None
+        self.ms_font = QFont("Consolas", 8)
+        self._cached_rect = None
         self._cached_rect = None
         self._cached_scale = 0
 
@@ -20,30 +22,38 @@ class TimelineGridPainter:
         self._draw_playhead(painter, rect, scale_factor, playhead_pos)
 
     def _regenerate_cache(self, rect, scale_factor, view_port_info):
-        """Generates a static image of the ruler."""
-        w, h = int(rect.width()), self.ruler_height
+        """Goal 18: Precision ruler generation with memory-safe allocation."""
+
+        w = min(int(rect.width()), 8000) 
+        h = self.ruler_height
         if w <= 0: return
+
         self._cache = QPixmap(w, h)
         self._cache.fill(QColor(25, 25, 25))
         self._cached_rect = rect
         self._cached_scale = scale_factor
+        
         p = QPainter(self._cache)
         try:
             p.translate(-rect.left(), 0)
             p.setPen(QPen(QColor(150, 150, 150), 1))
-            p.drawLine(int(rect.left()), h, int(rect.right()), h)
+            
             start_x, end_x = rect.left(), rect.right()
+            p.drawLine(int(start_x), h, int(end_x), h)
+            
             start_sec_raw = max(0, start_x / scale_factor)
             end_sec_raw = end_x / scale_factor
-            units = [1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600]
+            
+            units = [0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600]
             major_step_sec = units[0]
             for unit in units:
-                if scale_factor * unit > 80:
+                if scale_factor * unit > 100:
                     major_step_sec = unit
                     break
+
             minor_step_sec = major_step_sec / 5.0
-            start_unit = int(start_sec_raw / minor_step_sec) * minor_step_sec
-            sec = start_unit
+            i = int(start_sec_raw / minor_step_sec)
+            sec = i * minor_step_sec
             if 'font' in view_port_info:
                 p.setFont(view_port_info['font'])
             while sec < end_sec_raw:
@@ -70,6 +80,10 @@ class TimelineGridPainter:
             return
         painter.setPen(QPen(QColor(255, 0, 0), 1))
         painter.drawLine(int(playhead_x), 0, int(playhead_x), int(rect.height()))
+        painter.setFont(self.ms_font)
+        ms_text = f"{int((playhead_pos % 1) * 1000):03}ms"
+        painter.setPen(QColor(255, 255, 255, 200))
+        painter.drawText(int(playhead_x) + 10, 25, ms_text)
         painter.setBrush(QBrush(QColor(255, 0, 0)))
         poly = QPolygonF([
             QPointF(playhead_x - 7, 0),
@@ -77,6 +91,16 @@ class TimelineGridPainter:
             QPointF(playhead_x, 15)
         ])
         painter.drawPolygon(poly)
+
+    def draw_scene_markers(self, painter, rect, scale_factor, scene_times):
+        """Draws high-visibility markers for detected video cuts."""
+        painter.save()
+        painter.setPen(QPen(QColor(0, 255, 255, 150), 2))
+        for t in scene_times:
+            x = t * scale_factor
+            if rect.left() <= x <= rect.right():
+                painter.drawLine(int(x), 0, int(x), self.ruler_height)
+        painter.restore()
 
     def draw_razor_indicator(self, painter, rect, x_pos):
         """Goal 16: High-visibility Razor Ghost line."""

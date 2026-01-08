@@ -8,8 +8,9 @@ class InspectorWidget(QWidget):
     track_mute_toggled = pyqtSignal(int, bool)
     crop_toggled = pyqtSignal(bool)
 
-    def __init__(self):
+    def __init__(self, main_window=None):
         super().__init__()
+        self.mw = main_window
         self.setMinimumWidth(250)
         self.setStyleSheet("""
             QWidget { background-color: #2E2E2E; color: #E0E0E0; font-family: 'Segoe UI'; }
@@ -193,7 +194,13 @@ class InspectorWidget(QWidget):
         if not self.current_clip:
             return
         self.blockSignals(True)
-        if param == "crop_x1":
+        if param == "speed":
+            self.spin_speed.setValue(value)
+            self.slider_speed.setValue(int(value * 100))
+        elif param == "volume":
+            self.spin_volume.setValue(value)
+            self.slider_volume.setValue(int(value * 100))
+        elif param == "crop_x1":
             self.spin_crop_x1.setValue(value * 100)
         elif param == "crop_y1":
             self.spin_crop_y1.setValue(value * 100)
@@ -203,35 +210,46 @@ class InspectorWidget(QWidget):
             self.spin_crop_y2.setValue(value * 100)
         self.blockSignals(False)
 
-    def set_clip(self, clip_model, track_muted=False):
+    def set_clip(self, clip_models, track_muted=False):
         self.blockSignals(True)
-        self.current_clip = clip_model
-        if clip_model:
-            self.lbl_title.setText(f"Clip: {clip_model.name}")
+        self.current_clip = clip_models
+        if not clip_models:
+            self.lbl_title.setText("No Selection")
+
+            for attr in ['spin_speed', 'slider_speed', 'spin_volume', 'slider_volume', 
+                         'chk_mute_track', 'chk_lock_pos', 'btn_crop_toggle', 'btn_resync',
+                         'spin_crop_x1', 'spin_crop_y1', 'spin_crop_x2', 'spin_crop_y2']:
+                if hasattr(self, attr):
+                    getattr(self, attr).setEnabled(False)
+        else:
+
+            for attr in ['spin_speed', 'slider_speed', 'spin_volume', 'slider_volume', 
+                         'chk_mute_track', 'chk_lock_pos', 'btn_crop_toggle', 
+                         'spin_crop_x1', 'spin_crop_y1', 'spin_crop_x2', 'spin_crop_y2']:
+                if hasattr(self, attr):
+                    getattr(self, attr).setEnabled(True)
             self.spin_speed.setEnabled(True)
             self.spin_volume.setEnabled(True)
             self.chk_mute_track.setEnabled(True)
             self.chk_lock_pos.setEnabled(True)
-            self.spin_speed.setValue(getattr(clip_model, 'speed', 1.0))
-            self.spin_volume.setValue(int(getattr(clip_model, 'volume', 100.0)))
-            self.chk_lock_pos.setChecked(getattr(clip_model, 'locked', False))
-            self.chk_mute_track.setChecked(track_muted)
-            self.spin_crop_x1.setValue(getattr(clip_model, 'crop_x1', 0.0) * 100)
-            self.spin_crop_y1.setValue(getattr(clip_model, 'crop_y1', 0.0) * 100)
-            self.spin_crop_x2.setValue(getattr(clip_model, 'crop_x2', 1.0) * 100)
-            self.spin_crop_y2.setValue(getattr(clip_model, 'crop_y2', 1.0) * 100)
-            w = getattr(clip_model, 'width', 0)
-            h = getattr(clip_model, 'height', 0)
-            self.lbl_res.setText(f"Resolution: {w}x{h}" if w > 0 else "Resolution: N/A")
-            self.lbl_bitrate.setText(f"Bitrate: {getattr(clip_model, 'bitrate', 0)//1000} kbps")
             self.btn_crop_toggle.setEnabled(True)
-        else:
-            self.lbl_title.setText("No Selection")
-            self.spin_speed.setEnabled(False)
-            self.spin_volume.setEnabled(False)
-            self.chk_mute_track.setEnabled(False)
-            self.chk_lock_pos.setEnabled(False)
-            self.btn_crop_toggle.setEnabled(False)
+            first_clip = clip_models[0]
+            if len(clip_models) > 1:
+                self.lbl_title.setText(f"{len(clip_models)} Clips Selected")
+            else:
+                self.lbl_title.setText(f"Clip: {first_clip.name}")
+            self.spin_speed.setValue(getattr(first_clip, 'speed', 1.0))
+            self.spin_volume.setValue(int(getattr(first_clip, 'volume', 100.0)))
+            self.chk_lock_pos.setChecked(getattr(first_clip, 'locked', False))
+            self.chk_mute_track.setChecked(track_muted)
+            self.spin_crop_x1.setValue(getattr(first_clip, 'crop_x1', 0.0) * 100)
+            self.spin_crop_y1.setValue(getattr(first_clip, 'crop_y1', 0.0) * 100)
+            self.spin_crop_x2.setValue(getattr(first_clip, 'crop_x2', 1.0) * 100)
+            self.spin_crop_y2.setValue(getattr(first_clip, 'crop_y2', 1.0) * 100)
+            w = getattr(first_clip, 'width', 0)
+            h = getattr(first_clip, 'height', 0)
+            self.lbl_res.setText(f"Resolution: {w}x{h}" if w > 0 else "Resolution: N/A")
+            self.lbl_bitrate.setText(f"Bitrate: {getattr(first_clip, 'bitrate', 0)//1000} kbps")
         self.blockSignals(False)
 
     def on_resync_clicked(self):

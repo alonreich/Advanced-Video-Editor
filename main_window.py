@@ -7,8 +7,8 @@ import logging
 import json
 import time
 from PyQt5.QtWidgets import (QMainWindow, QDockWidget, QAction, QToolButton, QMenu, 
-                             QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, 
-                             QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem, QStyle)
+                            QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, 
+                            QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem, QStyle)
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt, QByteArray
 from project_controller import ProjectController
@@ -27,9 +27,11 @@ from inspector import InspectorWidget
 from media_pool import MediaPoolWidget
 from export_dialog import ExportDialog
 from custom_title_bar import CustomTitleBar
+from shortcuts_dialog import ShortcutsDialog
+from clip_item import ClipItem
 
 class MainWindow(QMainWindow):
-    def __init__(self, base_dir):
+    def __init__(self, base_dir, file_to_load=None):
         super().__init__()
         BinaryManager.ensure_env()
         self.base_dir = base_dir
@@ -53,7 +55,11 @@ class MainWindow(QMainWindow):
         self.initial_layout_state = self.saveState()
         self.initial_geometry = self.saveGeometry()
         self.finalize_setup()
-        self.proj_ctrl.load_initial()
+        if file_to_load:
+            self.proj_ctrl.reset_project()
+            self.asset_loader.handle_drop(file_to_load, -1, 0.0)
+        else:
+            self.proj_ctrl.load_initial()
 
     def on_media_pool_double_click(self, path):
         self.logger.info(f"on_media_pool_double_click called with path: {path}")
@@ -67,7 +73,7 @@ class MainWindow(QMainWindow):
         self.preview.set_player(self.player_node)
         self.playback = PlaybackManager(self.player_node, self.timeline, self.inspector)
         self.playback.playhead_updated.connect(self.timeline.set_visual_time)
-        self.timeline.time_updated.connect(self.player_node.seek)
+        self.timeline.time_updated.connect(self.playback.seek_and_sync)
         self.playback.state_changed.connect(lambda p: None)
         self.timeline.data_changed.connect(self.mark_dirty)
         self.timeline.file_dropped.connect(self.asset_loader.handle_drop)
@@ -78,7 +84,7 @@ class MainWindow(QMainWindow):
         self.preview.play_requested.connect(self.toggle_play)
         self.preview.interaction_started.connect(self.clip_ctrl.undo_lock_acquire)
         self.preview.interaction_ended.connect(self.clip_ctrl.undo_lock_release)
-        self.timeline.interaction_ended.connect(self.timeline.fit_to_view)
+
         self.inspector.track_mute_toggled.connect(lambda t, m: (self.track_mutes.update({t:m}), self.mark_dirty()))
         self.inspector.param_changed.connect(self.clip_ctrl.on_param_changed)
         self.inspector.resolution_changed.connect(self.on_resolution_switched)
@@ -120,7 +126,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_timeline)
         self.dock_insp = QDockWidget("Inspector", self)
         self.dock_insp.setObjectName("InspectorDock")
-        self.inspector = InspectorWidget()
+        self.inspector = InspectorWidget(main_window=self)
         self.dock_insp.setWidget(self.inspector)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock_insp)
         self.dock_pool = QDockWidget("Media Pool", self)
@@ -140,7 +146,7 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Main")
         tb.setObjectName("MainToolbar")
         tb.setStyleSheet("QToolButton, QPushButton { font-size: 13px; padding: 5px; }")
-        import_action = QAction("📂  Import Media", self)
+        import_action = QAction("\U0001F4C2  Import Media  \U0001F4C2", self)
         import_action.setToolTip("Import media files into the project")
         import_action.triggered.connect(self.import_media)
         tb.addAction(import_action)
@@ -149,6 +155,10 @@ class MainWindow(QMainWindow):
         export_action.setToolTip("Export the timeline as a video file")
         export_action.triggered.connect(self.open_export)
         tb.addAction(export_action)
+        shortcuts_action = QAction("⌨ Shortcuts", self)
+        shortcuts_action.setToolTip("View keyboard command reference")
+        shortcuts_action.triggered.connect(self.show_shortcuts)
+        tb.addAction(shortcuts_action)
         tb.addSeparator()
         undo_action = QAction("Undo", self)
         undo_action.setToolTip("Undo the last action")
@@ -162,12 +172,12 @@ class MainWindow(QMainWindow):
         delete_action.setToolTip("Delete the selected clip")
         delete_action.triggered.connect(lambda: self.clip_ctrl.delete_current())
         tb.addAction(delete_action)
-        self.act_snap = tb.addAction("🧲")
+        self.act_snap = tb.addAction("\U0001F9F2")
         self.act_snap.setToolTip("Toggle snapping on the timeline")
         self.act_snap.setCheckable(True)
         self.act_snap.setChecked(True)
         self.act_snap.toggled.connect(lambda e: setattr(self.timeline.timeline_view, 'snapping_enabled', e))
-        self.act_ripple = tb.addAction("🌊")
+        self.act_ripple = tb.addAction("\U0001F30A")
         self.act_ripple.setToolTip("Toggle ripple edit mode")
         self.act_ripple.setCheckable(True)
         self.act_ripple.setChecked(True)
@@ -175,6 +185,12 @@ class MainWindow(QMainWindow):
         self.act_proxy.setToolTip("Toggle proxy media usage for faster editing")
         self.act_proxy.setCheckable(True)
         self.act_proxy.setChecked(True)
+
+        self.act_lock_zoom = tb.addAction("🔒 Lock Zoom")
+        self.act_lock_zoom.setToolTip("Prevent the timeline from auto-zooming during edits")
+        self.act_lock_zoom.setCheckable(True)
+        self.act_lock_zoom.setChecked(False)
+        self.act_lock_zoom.toggled.connect(self.on_zoom_lock_toggled)
         self.btn_projects = QToolButton()
         self.btn_projects.setText(" Projects ")
         self.btn_projects.setCursor(Qt.PointingHandCursor)
@@ -201,7 +217,7 @@ class MainWindow(QMainWindow):
         btn_reset_proj.clicked.connect(self.proj_ctrl.reset_project)
         btn_reset_proj.setStyleSheet("background-color: #C62828; color: white; font-weight: bold; border-radius: 3px; padding: 5px; margin-right: 5px;")
         tb.addWidget(btn_reset_proj)
-        btn_nuke = QPushButton("DELETE ALL")
+        btn_nuke = QPushButton("DELETE ALL PROJECTS")
         btn_nuke.setCursor(Qt.PointingHandCursor)
         btn_nuke.setToolTip("Delete all projects and associated files")
         btn_nuke.clicked.connect(self.proj_ctrl.delete_all_projects)
@@ -237,7 +253,7 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def on_recording_started(self):
-        self.statusBar().showMessage("🔴 RECORDING VOICEOVER...")
+        self.statusBar().showMessage("ðŸ”´ RECORDING VOICEOVER...")
 
     def on_recording_finished(self, path):
         self.statusBar().showMessage(f"Voiceover saved: {os.path.basename(path)}", 5000)
@@ -247,22 +263,36 @@ class MainWindow(QMainWindow):
         self.restoreState(self.initial_layout_state)
         self.restoreGeometry(self.initial_geometry)
 
-    def import_media(self): 
+    def import_media(self):
         self.asset_loader.import_dialog()
 
     def open_export(self):
-        dlg = ExportDialog(self.timeline.get_state(), self.track_volumes, self.track_mutes, self.inspector.combo_res.currentText(), self)
+        dlg = ExportDialog(self.timeline.get_state(), self.track_volumes, self.track_mutes, self.inspector.combo_res.currentText(), 
+ self)
+        dlg.exec_()
+
+    def show_shortcuts(self):
+        dlg = ShortcutsDialog(self)
         dlg.exec_()
 
     def toggle_play(self):
         self.playback.toggle_play(self.act_proxy.isChecked(), self.track_volumes, self.track_mutes)
 
-    def mark_dirty(self): 
+    def mark_dirty(self):
         self.is_dirty = True
 
     def save_state_for_undo(self):
         self.history.push(self.timeline.get_state())
         self.mark_dirty()
+
+    def save_crash_backup(self):
+        """Called by the global exception hook during a critical failure."""
+        self.logger.critical("Attempting emergency crash backup...")
+        ui = {
+            "playhead": self.timeline.playhead_pos,
+            "resolution": self.inspector.combo_res.currentText()
+        }
+        self.pm.save_state(self.timeline.get_state(), ui_state=ui, is_emergency=True)
 
     def undo_action(self):
         if s := self.history.undo(self.timeline.get_state()): self.timeline.load_state(s)
@@ -270,9 +300,10 @@ class MainWindow(QMainWindow):
     def redo_action(self):
         if s := self.history.redo(self.timeline.get_state()): self.timeline.load_state(s)
 
-    def on_selection(self, item):
-        self.inspector.set_clip(item.model if item else None, self.track_mutes.get(item.track if item else 0, False))
-        self.preview.overlay.set_selected_clip(item.model if item else None)
+    def on_selection(self, items):
+        models = [item.model for item in items if isinstance(item, ClipItem)]
+        self.inspector.set_clip(models, self.track_mutes.get(models[0].track if models else 0, False))
+        self.preview.overlay.set_selected_clip(models[0] if models else None)
 
     def closeEvent(self, e):
         self.asset_loader.cleanup()
@@ -295,3 +326,10 @@ class MainWindow(QMainWindow):
         self.config.set("geometry", self.saveGeometry().toHex().data().decode())
         self.config.set("state", self.saveState().toHex().data().decode())
         super().closeEvent(e)
+
+    def on_zoom_lock_toggled(self, locked):
+        """Goal 18: Link the toolbar lock to the timeline view's internal state."""
+        self.timeline.timeline_view.zoom_locked = locked
+        status = "LOCKED" if locked else "UNLOCKED"
+        self.statusBar().showMessage(f"Timeline Auto-Zoom: {status}", 2000)
+        self.logger.info(f"[UI] Timeline zoom lock set to: {locked}")

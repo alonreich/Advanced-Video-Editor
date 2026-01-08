@@ -39,12 +39,21 @@ class ExportDialog(QDialog):
             end = clip.get('start', 0.0) + clip.get('dur', 0.0)
             if end > max_duration:
                 max_duration = end
-        video_kbps = 8000
-        if "1440" in self.res_mode: video_kbps = 16000
-        elif "2160" in self.res_mode or "3840" in self.res_mode: video_kbps = 45000
-        elif "720" in self.res_mode: video_kbps = 4000
-        total_kbps = video_kbps + 192
-        size_mb = (total_kbps * max_duration) / 8192
+
+        is_high_fps = "60" in self.res_mode or "120" in self.res_mode
+
+        if "2160" in self.res_mode or "3840" in self.res_mode:
+            video_mbps = 68 if is_high_fps else 45
+        elif "1440" in self.res_mode:
+            video_mbps = 24 if is_high_fps else 16
+        elif "1080" in self.res_mode:
+            video_mbps = 12 if is_high_fps else 8
+        else:
+            video_mbps = 5
+            
+        total_mbps = video_mbps + 0.32
+
+        size_mb = (total_mbps * max_duration) / 8
         mins = int(max_duration // 60)
         secs = int(max_duration % 60)
         return f"Duration: {mins:02}:{secs:02} | Target: {self.res_mode} | Est. Size: ~{size_mb:.1f} MB"

@@ -1,5 +1,6 @@
 import os
 import struct
+import time
 from PyQt5.QtCore import QObject, pyqtSignal, QFile, QIODevice
 from PyQt5.QtMultimedia import QAudioInput, QAudioFormat, QAudioDeviceInfo
 
@@ -46,22 +47,28 @@ class VoiceoverRecorder(QObject):
         self._write_wav_header(self.current_path)
         self.recording_finished.emit(self.current_path)
 
-    def _write_wav_header(self, path):
+    def _write_wav_header(self, path, max_retries=5, delay_s=0.1):
         """Fixes the WAV header so FFmpeg/VLC can read the PCM data."""
-        if not os.path.exists(path): return
-        file_size = os.path.getsize(path)
-        data_size = file_size - 44
-        with open(path, 'r+b') as f:
-            f.write(b'RIFF')
-            f.write(struct.pack('<I', file_size - 8))
-            f.write(b'WAVE')
-            f.write(b'fmt ')
-            f.write(struct.pack('<I', 16))
-            f.write(struct.pack('<H', 1))
-            f.write(struct.pack('<H', 1))
-            f.write(struct.pack('<I', 44100))
-            f.write(struct.pack('<I', 44100 * 1 * 2))
-            f.write(struct.pack('<H', 2))
-            f.write(struct.pack('<H', 16))
-            f.write(b'data')
-            f.write(struct.pack('<I', data_size))
+        if not os.path.exists(path):
+            return
+        for i in range(max_retries):
+            try:
+                file_size = os.path.getsize(path)
+                if file_size < 44: return
+                data_size = file_size - 44
+                with open(path, 'r+b') as f:
+
+                    f.seek(0)
+                    f.write(b'RIFF' + struct.pack('<I', file_size - 8) + b'WAVEfmt ')
+                    f.write(struct.pack('<IHHIIHH', 16, 1, 1, 44100, 88200, 2, 16))
+                    f.write(b'data' + struct.pack('<I', data_size))
+                    f.flush()
+                    os.fsync(f.fileno())
+                return
+            except PermissionError:
+                time.sleep(delay_s)
+                print(f"WAV header patch failed (retry {i+1}/{max_retries}): File locked. Retrying...")
+            except Exception as e:
+                print(f"Failed to write WAV header to {path}: {e}")
+                return
+        print(f"Failed to write WAV header to {path} after {max_retries} retries. File remained locked.")

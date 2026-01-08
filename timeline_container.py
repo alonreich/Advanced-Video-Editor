@@ -6,19 +6,36 @@ from track_header import TrackHeaders
 
 class TimelineContainer(QWidget):
     time_updated = pyqtSignal(float)
-    clip_selected = pyqtSignal(object)
+    clip_selected = pyqtSignal(list)
     file_dropped = pyqtSignal(str, int, float)
     track_volume_changed = pyqtSignal(int, float)
 
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
+        from PyQt5.QtWidgets import QScrollArea
+        from PyQt5.QtCore import Qt
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
+
+        self.header_scroll = QScrollArea()
+        self.header_scroll.setFixedWidth(120)
+        self.header_scroll.setWidgetResizable(True)
+        self.header_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.header_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.header_scroll.setFrameShape(QScrollArea.NoFrame)
+
         self.track_headers = TrackHeaders()
+        self.header_scroll.setWidget(self.track_headers)
+
         self.timeline_view = TimelineView(main_window=main_window, track_headers=self.track_headers)
-        self.main_layout.addWidget(self.track_headers)
+
+        self.timeline_view.verticalScrollBar().valueChanged.connect(
+            self.header_scroll.verticalScrollBar().setValue
+        )
+
+        self.main_layout.addWidget(self.header_scroll)
         self.main_layout.addWidget(self.timeline_view)
         self.timeline_view.time_updated.connect(self.time_updated)
         self.timeline_view.clip_selected.connect(self.clip_selected)
@@ -44,12 +61,11 @@ class TimelineContainer(QWidget):
             highest_track = -1
         else:
             highest_track = max(c.get('track', 0) for c in clips)
-        if highest_track <= 0:
+
+        if highest_track < 1:
             desired_tracks = 2
-        elif highest_track <= 2:
-            desired_tracks = 4
         else:
-            desired_tracks = 6
+            desired_tracks = min(highest_track + 2, 50)
         current_tracks = self.timeline_view.num_tracks
         while current_tracks < desired_tracks:
             self.add_track()

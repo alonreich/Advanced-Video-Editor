@@ -27,31 +27,33 @@ class ThumbnailWorker(QThread):
         self.queue.put(None)
 
     def get_hwaccel_args(self):
-        """Goal 14: Dynamic GPU hijacking for lightning-fast previews."""
+        """Goal 14: Forced GPU hijacking for 40-Series optimization."""
         if self.checked_hwaccel:
             return self.hwaccel_args, self.scale_filter
+        from binary_manager import BinaryManager
+        BinaryManager.ensure_env()
+        gpu_codec = BinaryManager.get_best_encoder(self.logger)
         self.checked_hwaccel = True
-        try:
-            from binary_manager import BinaryManager
-            gpu_codec = BinaryManager.get_best_encoder()
-            if gpu_codec in ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc']:
-                self.hwaccel_args = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']
-                self.scale_filter = 'scale_cuda'
-                self.logger.info(f"[THUMB-GPU] 40-Series Optimization Active (CUDA).")
-            elif gpu_codec == 'h264_qsv':
-                self.hwaccel_args = ['-hwaccel', 'qsv']
-                self.scale_filter = 'vpp_qsv'
-            else:
-                self.hwaccel_args, self.scale_filter = [], 'scale'
-        except Exception as e:
-            self.logger.error(f"[THUMB-GPU] GPU Hijack failed, falling back: {e}")
+        if gpu_codec in ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc']:
+            self.hwaccel_args = ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda']
+            self.scale_filter = 'scale_cuda'
+            self.logger.info(f"[THUMB-GPU] 40-Series NVIDIA GPU detected. Using scale_cuda.")
+        elif gpu_codec == 'h264_qsv':
+            self.hwaccel_args = ['-hwaccel', 'qsv']
+            self.scale_filter = 'vpp_qsv'
+            self.logger.info(f"[THUMB-GPU] Intel QSV detected. Using vpp_qsv.")
+        else:
             self.hwaccel_args, self.scale_filter = [], 'scale'
+            self.logger.info(f"[THUMB-CPU] No compatible GPU found for thumbnails. Falling back to CPU.")
         return self.hwaccel_args, self.scale_filter
 
     def run(self):
         while self.running:
             try:
-                task = self.queue.get()
+                try:
+                    task = self.queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
                 if task is None:
                     break
                 self.process_task(task)
@@ -74,38 +76,39 @@ class ThumbnailWorker(QThread):
         self.thumbnail_generated.emit(uid, out_start, out_end)
 
     def _generate_thumb(self, in_path, out_path, seek_time):
+        """Goal 14: Hardware-accelerated thumbnail generation."""
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             return
+        
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         hw_args, s_filter = self.get_hwaccel_args()
+
+        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error']
         if hw_args:
-            vf_chain = f"format=nv12,hwupload_cuda,{s_filter}=trunc(oh*a/2)*2:120,hwdownload,format=nv12"
-            cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', 
-                   '-ss', str(seek_time),
-                   '-init_hw_device', 'cuda=cuda:0', 
-                   '-filter_hw_device', 'cuda',
-                   '-i', in_path,
-                   '-fps_mode', 'passthrough',
-                   '-vf', vf_chain, 
-                   '-vframes', '1', 
-                   '-y', out_path]
-            if self.run_ffmpeg(cmd, si): return
-            self.logger.warning(f"[THUMB] HW generation failed for {os.path.basename(in_path)}, trying SW fallback.")
-        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error',
-               '-ss', str(seek_time), 
-               '-i', in_path,
-               '-vf', 'scale=-2:120', 
-               '-vframes', '1', 
-               '-y', out_path]
-        self.run_ffmpeg(cmd, si)
+            if 'cuda' in hw_args:
+
+                vf_chain = f"{s_filter}=-1:120"
+                device_args = ['-init_hw_device', 'cuda=cuda:0', '-filter_hw_device', 'cuda']
+            elif 'qsv' in hw_args:
+                vf_chain = f"vpp_qsv=h=120"
+                device_args = ['-init_hw_device', 'qsv=qsv', '-filter_hw_device', 'qsv']
+            cmd += hw_args + device_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
+        else:
+            cmd += ['-ss', str(seek_time), '-i', in_path, '-vf', f"scale=-1:120"]
+
+        cmd += ['-vframes', '1', '-y', out_path]
+                   
+        if self.run_ffmpeg(cmd, si): 
+            return
+        self.logger.warning(f"[THUMB] FFmpeg failed for {os.path.basename(in_path)}.")
 
     def run_ffmpeg(self, cmd, startup_info):
         try:
             bin_full = shutil.which(cmd[0]) or cmd[0]
             cmd[0] = bin_full
             subprocess.run(cmd, capture_output=True, text=True,
-                           startupinfo=startup_info, check=True, encoding='utf-8')
+                            startupinfo=startup_info, check=True, encoding='utf-8')
             return True
         except subprocess.CalledProcessError as e:
             return False
@@ -136,7 +139,7 @@ class ProxyWorker(QThread):
     def get_encoding_settings(self):
         """Determines best encoder for fast, low-quality proxy generation."""
         if self.checked_hwaccel:
-            return self.hwaccel_args, self.scale_filter
+            return self.hwaccel_args, self.codec
         self.checked_hwaccel = True
         try:
             from binary_manager import BinaryManager
@@ -164,10 +167,13 @@ class ProxyWorker(QThread):
     def run(self):
         while self.running:
             try:
-                task = self.queue.get()
-                if task is None: break
+                task = self.queue.get(timeout=0.5)
+                if task is None:
+                    break
                 self.process_task(task)
                 self.queue.task_done()
+            except queue.Empty:
+                continue
             except Exception as e:
                 self.logger.error(f"Proxy Queue Error: {e}")
 

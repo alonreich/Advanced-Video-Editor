@@ -32,6 +32,9 @@ class ProjectController:
             asset_data = data.get('assets', [])
             self.mw.media_pool.clear()
             self.mw.timeline.load_state(timeline_data)
+
+            self.mw.history.undo_stack.clear()
+            self.mw.history.redo_stack.clear()
             self.mw.history.current_state_map = {c['uid']: copy.deepcopy(c) for c in timeline_data}
             self.restore_ui_state(data.get('ui_state', {}))
             seen_assets = set()
@@ -44,6 +47,7 @@ class ProjectController:
                 if file_path and file_path not in seen_assets:
                     self.mw.media_pool.add_file(file_path)
                     seen_assets.add(file_path)
+
                 self.mw.asset_loader.regenerate_assets(item)
             self.mw.setWindowTitle(f"Advanced Video Editor - {self.pm.project_name}")
             self.mw.save_state_for_undo()
