@@ -7,12 +7,15 @@ from logging.handlers import RotatingFileHandler
 
 class StreamToLogger:
     """Redirects stdout/stderr to the logger."""
+
     def __init__(self, logger, level):
         self.logger = logger
         self.level = level
+
     def write(self, buf):
         for line in buf.rstrip().splitlines():
             self.logger.log(self.level, line.rstrip())
+
     def flush(self): pass
 
 def setup_system(base_dir):
@@ -31,6 +34,7 @@ def setup_system(base_dir):
     return logger
 
 class ConfigManager:
+
     def __init__(self, path):
         self.path = path
         self.data = {}
@@ -50,6 +54,7 @@ class ConfigManager:
             with open(self.path, 'w') as f: json.dump(self.data, f, indent=4)
 
     def get(self, k, default=None): return self.data.get(k, default)
+
     def set(self, k, v):
         self.data[k] = v
         self.save()

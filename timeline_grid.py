@@ -2,6 +2,7 @@ from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPixmap, QPainter, QFon
 from PyQt5.QtCore import QRectF, QPointF, Qt
 
 class TimelineGridPainter:
+
     def __init__(self, ruler_height=30):
         self.ruler_height = ruler_height
         self._cache = None
@@ -23,34 +24,27 @@ class TimelineGridPainter:
 
     def _regenerate_cache(self, rect, scale_factor, view_port_info):
         """Goal 18: Precision ruler generation with memory-safe allocation."""
-
         w = min(int(rect.width()), 8000) 
         h = self.ruler_height
         if w <= 0: return
-
         self._cache = QPixmap(w, h)
         self._cache.fill(QColor(25, 25, 25))
         self._cached_rect = rect
         self._cached_scale = scale_factor
-        
         p = QPainter(self._cache)
         try:
             p.translate(-rect.left(), 0)
             p.setPen(QPen(QColor(150, 150, 150), 1))
-            
             start_x, end_x = rect.left(), rect.right()
             p.drawLine(int(start_x), h, int(end_x), h)
-            
             start_sec_raw = max(0, start_x / scale_factor)
             end_sec_raw = end_x / scale_factor
-            
             units = [0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600]
             major_step_sec = units[0]
             for unit in units:
                 if scale_factor * unit > 100:
                     major_step_sec = unit
                     break
-
             minor_step_sec = major_step_sec / 5.0
             i = int(start_sec_raw / minor_step_sec)
             sec = i * minor_step_sec
@@ -103,11 +97,14 @@ class TimelineGridPainter:
         painter.restore()
 
     def draw_razor_indicator(self, painter, rect, x_pos):
-        """Goal 16: High-visibility Razor Ghost line."""
+        """Goal 16: High-visibility Magnetic Razor Ghost line."""
         painter.save()
-        pen = QPen(QColor(255, 255, 0, 200), 1, Qt.DashLine)
+        pen = QPen(QColor(255, 255, 0, 255), 2, Qt.SolidLine)
         painter.setPen(pen)
         painter.drawLine(int(x_pos), 0, int(x_pos), int(rect.height()))
+        painter.setBrush(QColor(255, 255, 0))
+        painter.drawRect(int(x_pos) - 3, 0, 6, self.ruler_height)
+        painter.restore()
         painter.setBrush(QColor(255, 255, 0))
         painter.setPen(Qt.NoPen)
         painter.drawRect(int(x_pos) - 1, 0, 2, self.ruler_height)

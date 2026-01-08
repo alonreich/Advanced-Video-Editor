@@ -215,14 +215,12 @@ class InspectorWidget(QWidget):
         self.current_clip = clip_models
         if not clip_models:
             self.lbl_title.setText("No Selection")
-
             for attr in ['spin_speed', 'slider_speed', 'spin_volume', 'slider_volume', 
                          'chk_mute_track', 'chk_lock_pos', 'btn_crop_toggle', 'btn_resync',
                          'spin_crop_x1', 'spin_crop_y1', 'spin_crop_x2', 'spin_crop_y2']:
                 if hasattr(self, attr):
                     getattr(self, attr).setEnabled(False)
         else:
-
             for attr in ['spin_speed', 'slider_speed', 'spin_volume', 'slider_volume', 
                          'chk_mute_track', 'chk_lock_pos', 'btn_crop_toggle', 
                          'spin_crop_x1', 'spin_crop_y1', 'spin_crop_x2', 'spin_crop_y2']:

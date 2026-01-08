@@ -10,7 +10,9 @@ from player import MPVPlayer
 from history import UndoStack
 from ffmpeg_generator import FilterGraphGenerator
 app = QApplication([])
+
 class MockPreviewWidget(QWidget):
+
     def __init__(self, player_node, parent=None):
         super().__init__(parent)
         self.player_node = player_node
@@ -23,6 +25,7 @@ class MockPreviewWidget(QWidget):
         pass
 
 class MockClipModel:
+
     def __init__(self, uid, name, start, duration, track, media_type='video', **kwargs):
         self.uid = uid
         self.name = name
@@ -41,17 +44,20 @@ class MockClipModel:
             'dur': self.duration, 'track': self.track, 'media_type': self.media_type
         }
 @pytest.fixture
+
 def clean_scene():
     scene = QGraphicsScene()
     yield scene
     scene.clear()
 @pytest.fixture
+
 def clip_item_fixture(clean_scene):
     model = MockClipModel("test_uid_1", "Test Clip", 0, 10, 0)
     item = ClipItem(model)
     clean_scene.addItem(item)
     return item
 @pytest.fixture
+
 def other_clip_item_fixture(clean_scene):
     model = MockClipModel("test_uid_2", "Other Clip", 5, 10, 1)
     item = ClipItem(model)
@@ -74,6 +80,7 @@ def test_update_collision_cache_with_collision(clip_item_fixture, other_clip_ite
 @patch('main_window.ProjectManager')
 @patch('main_window.UndoStack')
 @patch('main_window.ConfigManager')
+
 def test_toggle_play_starts_filter_graph(mock_conf, mock_undo, mock_pm, mock_mpv, mock_gen):
     mock_mpv_inst = mock_mpv.return_value
     mock_mpv_inst.is_playing.return_value = False

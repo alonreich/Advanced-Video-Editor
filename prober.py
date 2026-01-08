@@ -6,10 +6,12 @@ import logging
 import shutil
 import hashlib
 from PyQt5.QtCore import QRunnable, QObject, pyqtSignal, QThread
+
 class ProbeSignals(QObject):
     result = pyqtSignal(dict)
 
 class ProbeWorker(QRunnable):
+
     def __init__(self, path, track_id=0, insert_time=0.0):
         super().__init__()
         self.path = path
@@ -130,7 +132,6 @@ class WaveformWorker(QThread):
                     task = self.queue.get(timeout=0.5)
                 except queue.Empty:
                     continue
-                    
                 if task is None:
                     break
                 path, uid = task

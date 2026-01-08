@@ -15,6 +15,7 @@ class PlaybackManager(QObject):
         self.timeline = timeline
         self.inspector = inspector
         self.is_dirty = True
+        self.start_offset = 0.0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._sync_playhead)
         self.timer.setInterval(33)
@@ -62,6 +63,7 @@ class PlaybackManager(QObject):
         """Rebuilds the FFmpeg filter graph and sends it to the player."""
         self.logger.debug("Rebuilding filter graph for playback...")
         current_time = self.timeline.playhead_pos
+        self.start_offset = current_time
         state = self.timeline.get_state()
         if not state:
             self.player.stop()
@@ -72,7 +74,6 @@ class PlaybackManager(QObject):
             for clip in state:
                 if clip.get('proxy_path') and os.path.exists(clip['proxy_path']):
                     clip['path'] = clip['proxy_path']
-
         gen = FilterGraphGenerator(
             state,
             width=self.canvas_width,
@@ -80,7 +81,6 @@ class PlaybackManager(QObject):
             volumes=track_vols,
             mutes=track_mutes
         )
-        gen.clips = state
         inputs, complex_filter, v_pad, a_pad, main_input_used = gen.build(
             start_time=current_time,
             duration=self.timeline.get_content_end(),
@@ -89,10 +89,6 @@ class PlaybackManager(QObject):
         try:
             self.player.play_filter_graph(complex_filter, inputs, main_input_used)
             self.player.play()
-
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(150, lambda: self.player.seek(current_time))
-            
             self.is_dirty = False
             self.timer.start()
             self.state_changed.emit(True)
@@ -104,7 +100,6 @@ class PlaybackManager(QObject):
 
     def _sync_playhead(self):
         """Main loop: Syncs UI playhead from player time."""
-
         if self.timeline.timeline_view.is_dragging_playhead or getattr(self, '_seeking', False):
             return
         if not self.player.is_playing():
@@ -117,41 +112,36 @@ class PlaybackManager(QObject):
             self.timer.stop()
             self.state_changed.emit(False)
             return
-        self.playhead_updated.emit(current_player_time)
+        abs_time = current_player_time + self.start_offset
+        self.playhead_updated.emit(abs_time)
         max_end = self.timeline.get_content_end()
-        if max_end > 0 and current_player_time >= max_end:
+        if max_end > 0 and abs_time >= max_end - 0.01:
             self.player.pause()
             self.timer.stop()
             self.playhead_updated.emit(max_end)
             self.state_changed.emit(False)
 
     def seek_and_sync(self, time_sec):
-        """Goal 8: Ultra-fast seek with buffer flushing for aggressive navigation."""
+        """Standardizes fast seeking by bypassing the blocking sync checks."""
+        if getattr(self, '_seeking', False): return
         self._seeking = True
-
         max_dur = self.timeline.get_content_end()
         target_time = max(0.0, min(time_sec, max_dur))
-        
         if self.player.is_playing():
             self.player.pause()
-        
-        if hasattr(self.inspector.mw.preview, 'overlay'):
-            self.inspector.mw.preview.overlay.is_loading = True
-        
-        self._target_seek_time = time_sec
-        self._seek_retries = 0
-        def attempt_seek():
-            if not self.player.mpv or self._seek_retries > 10:
-                return
-            self.player.seek(self._target_seek_time)
-            if abs(self.player.get_time() - self._target_seek_time) > 0.5:
-                self._seek_retries += 1
-           
-                QTimer.singleShot(250, attempt_seek)
+            self.timer.stop()
+        if target_time < self.start_offset or target_time > (self.start_offset + 5.0):
+            self._rebuild_and_play(False, self.inspector.mw.track_volumes, self.inspector.mw.track_mutes)
+            self.player.pause()
+        else:
+            if target_time < self.start_offset:
+                self._rebuild_and_play(False, self.inspector.mw.track_volumes, self.inspector.mw.track_mutes)
+                self.player.pause()
             else:
-                if hasattr(self.inspector.mw.preview, 'overlay'):
-                    self.inspector.mw.preview.overlay.is_loading = False
-                self.playhead_updated.emit(self.player.get_time())
-                self._seeking = False
-
-        attempt_seek()
+                self.player.seek(target_time - self.start_offset)
+            self.playhead_updated.emit(target_time)
+        overlay = getattr(self.inspector.mw.preview, 'overlay', None)
+        if overlay:
+            overlay.is_loading = False
+            overlay.update()
+        self._seeking = False

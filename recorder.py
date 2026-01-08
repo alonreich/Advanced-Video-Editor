@@ -57,7 +57,6 @@ class VoiceoverRecorder(QObject):
                 if file_size < 44: return
                 data_size = file_size - 44
                 with open(path, 'r+b') as f:
-
                     f.seek(0)
                     f.write(b'RIFF' + struct.pack('<I', file_size - 8) + b'WAVEfmt ')
                     f.write(struct.pack('<IHHIIHH', 16, 1, 1, 44100, 88200, 2, 16))

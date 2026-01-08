@@ -6,6 +6,7 @@ from PyQt5.QtCore import Qt
 import vlc
 
 class VLCPlayer(QWidget):
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.instance = vlc.Instance("--no-xlib --quiet")

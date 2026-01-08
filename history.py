@@ -2,6 +2,7 @@ import logging
 import copy
 
 class UndoStack:
+
     def __init__(self):
         self.undo_stack = []
         self.redo_stack = []
@@ -22,7 +23,6 @@ class UndoStack:
             self.redo_stack.clear()
             updated_state_map = {}
             for uid, data in new_state_map.items():
-
                 if uid in command['added'] or uid in command['modified']:
                     updated_state_map[uid] = data.copy()
                 else:
@@ -82,7 +82,6 @@ class UndoStack:
                 for key, new_val in new_data.items():
                     old_val = old_data.get(key)
                     if old_val != new_val:
-
                         changes[key] = {'old': old_val, 'new': new_val}
                 if changes:
                     cmd['modified'][uid] = changes

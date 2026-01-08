@@ -4,7 +4,9 @@ import mpv
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import Qt
 from binary_manager import BinaryManager
+
 class MPVPlayer(QWidget):
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DontCreateNativeAncestors)
@@ -15,7 +17,6 @@ class MPVPlayer(QWidget):
         self._playing = False
 
     def initialize_mpv(self, wid):
-
         if self.mpv or not wid or wid <= 0:
             return
         self.mpv = mpv.MPV(
@@ -26,7 +27,7 @@ class MPVPlayer(QWidget):
             keep_open=True,
             pause=True,
             log_handler=self._on_mpv_log,
-            loglevel="warn",
+            loglevel="error",
         )
         _orig_command = self.mpv.command
 
@@ -75,9 +76,7 @@ class MPVPlayer(QWidget):
         if not self.mpv:
             return
         try:
-            mode = "absolute"
-            if self._playing:
-                mode = "absolute+keyframes"
+            mode = "absolute+keyframes" 
             self.mpv.command("seek", str(seconds), mode)
         except Exception as e:
             if "-12" in str(e):
@@ -131,21 +130,18 @@ class MPVPlayer(QWidget):
 
     def _ffmpeg_labels_to_mpv(self, graph: str) -> str:
         """Goal 8: Robust label mapping to prevent MPV backend crashes during gap seeking."""
+
         def repl_v(m):
             idx = int(m.group(1))
-
             return f"[vid{idx + 1}]"
 
         def repl_a(m):
             idx = int(m.group(1))
             return f"[aid{idx + 1}]"
-
         graph = re.sub(r"\[(\d+):v\]", repl_v, graph)
         graph = re.sub(r"\[(\d+):a\]", repl_a, graph)
-
         graph = re.sub(r"\[v(\d+)\]", r"[vid\1]", graph)
         graph = re.sub(r"\[a(\d+)\]", r"[aid\1]", graph)
-        
         return graph
 
     def play_filter_graph(self, filter_str: str, inputs: list, main_input_used_for_video: bool):
@@ -162,7 +158,6 @@ class MPVPlayer(QWidget):
             self.logger.error("[MPV] Filter graph is empty. Aborting playback.")
             self.stop()
             return
-
         main_input = clean_inputs[0]
         external_files = clean_inputs[1:] if len(clean_inputs) > 1 else []
         graph = self._ffmpeg_labels_to_mpv(graph)

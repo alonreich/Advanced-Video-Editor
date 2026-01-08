@@ -50,7 +50,6 @@ if __name__ == "__main__":
     sys.stdout = StreamToLogger(logger, logging.INFO)
     sys.stderr = StreamToLogger(logger, logging.ERROR)
     logger.info("=== Booting Advanced Video Editor ===")
-
     logger.info("Importing MainWindow...")
     from main_window import MainWindow
     logger.info("Creating QApplication...")

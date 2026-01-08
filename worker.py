@@ -79,41 +79,38 @@ class ThumbnailWorker(QThread):
         """Goal 14: Hardware-accelerated thumbnail generation."""
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             return
-        
         si = subprocess.STARTUPINFO()
         si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         hw_args, s_filter = self.get_hwaccel_args()
-
         cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error']
-        if hw_args:
-            if 'cuda' in hw_args:
-
-                vf_chain = f"{s_filter}=-1:120"
-                device_args = ['-init_hw_device', 'cuda=cuda:0', '-filter_hw_device', 'cuda']
-            elif 'qsv' in hw_args:
-                vf_chain = f"vpp_qsv=h=120"
-                device_args = ['-init_hw_device', 'qsv=qsv', '-filter_hw_device', 'qsv']
+        if hw_args and 'cuda' in hw_args:
+            vf_chain = f"{s_filter}=-2:120,hwdownload,format=nv12"
+            cmd += hw_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
+        elif hw_args and 'qsv' in hw_args:
+            vf_chain = f"vpp_qsv=w=-2:h=120"
+            device_args = ['-init_hw_device', 'qsv=qsv', '-filter_hw_device', 'qsv']
             cmd += hw_args + device_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
         else:
-            cmd += ['-ss', str(seek_time), '-i', in_path, '-vf', f"scale=-1:120"]
-
+            cmd += ['-ss', str(seek_time), '-i', in_path, '-vf', "scale=-2:120"]
         cmd += ['-vframes', '1', '-y', out_path]
-                   
-        if self.run_ffmpeg(cmd, si): 
-            return
-        self.logger.warning(f"[THUMB] FFmpeg failed for {os.path.basename(in_path)}.")
+        success, err_msg = self.run_ffmpeg(cmd, si)
+        if not success:
+            self.logger.warning(f"[THUMB] GPU failed for {os.path.basename(in_path)}, retrying on CPU...")
+            fallback_cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(seek_time), '-i', in_path, '-vf', 'scale=-1:120', '-vframes', '1', '-y', out_path]
+            success, err_msg = self.run_ffmpeg(fallback_cmd, si)
+            if not success:
+                self.logger.error(f"[THUMB] FFmpeg total failure for {os.path.basename(in_path)}: {err_msg}")
 
     def run_ffmpeg(self, cmd, startup_info):
         try:
             bin_full = shutil.which(cmd[0]) or cmd[0]
             cmd[0] = bin_full
-            subprocess.run(cmd, capture_output=True, text=True,
-                            startupinfo=startup_info, check=True, encoding='utf-8')
-            return True
+            res = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startup_info, check=True, encoding='utf-8')
+            return True, ""
         except subprocess.CalledProcessError as e:
-            return False
-        except Exception:
-            return False
+            return False, e.stderr
+        except Exception as e:
+            return False, str(e)
 
 class ProxyWorker(QThread):
     proxy_finished = pyqtSignal(str, str)

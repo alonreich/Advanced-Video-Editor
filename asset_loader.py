@@ -7,6 +7,7 @@ from worker import ThumbnailWorker
 from clip_item import ClipItem
 
 class AssetLoader(QObject):
+
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
@@ -53,7 +54,6 @@ class AssetLoader(QObject):
                 self.mw.media_pool.addItem(item)
                 if music_only:
                     self.handle_drop(local_path, next_track + i, 0)
-            
         if False:
                     self.handle_drop(local_path, next_track + i, 0)
 
@@ -66,12 +66,10 @@ class AssetLoader(QObject):
                     if hasattr(item, 'track'):
                         occupied_tracks.add(item.track)
             if is_audio:
-
                 track = 1
                 while track in occupied_tracks and track < 49:
                     track += 1
             else:
-
                 track = 0
                 while track in occupied_tracks and track < 49:
                     track += 1
@@ -82,22 +80,18 @@ class AssetLoader(QObject):
             local_path = path
         else:
             local_path = self.mw.pm.import_asset(path)
-
         if local_path in self._pending_probes:
             self.mw.logger.warning(f"[LOADER] Blocking duplicate import for: {local_path}")
             return
-
         in_pool = False
         for i in range(self.mw.media_pool.count()):
             if self.mw.media_pool.item(i).data(Qt.UserRole) == local_path:
                 in_pool = True
                 break
-        
         if not in_pool:
             item = QListWidgetItem(os.path.basename(local_path))
             item.setData(Qt.UserRole, local_path)
             self.mw.media_pool.addItem(item)
-
         self._pending_probes.add(local_path)
         worker = ProbeWorker(local_path, track_id=track, insert_time=time)
         worker.signals.result.connect(self.on_probe_done)
@@ -129,11 +123,13 @@ class AssetLoader(QObject):
             'media_type': 'video' if info.get('has_video') else 'audio',
             'linked_uid': a_uid
         }
-        self.mw.timeline.add_clip(video_data)
+        new_item = self.mw.timeline.add_clip(video_data)
+        self.mw.timeline.timeline_view.check_for_gaps(track, max(0, time - 0.05))
         self.mw.timeline.update_tracks()
         self.mw.timeline.fit_to_view()
         self.mw.save_state_for_undo()
         self.regenerate_assets(video_data)
+        new_item.update_cache()
 
     def regenerate_assets(self, data):
         self._regen_queue[data['uid']] = data
@@ -142,7 +138,6 @@ class AssetLoader(QObject):
     def _process_regen_queue(self):
         while self._regen_queue:
             uid, data = self._regen_queue.popitem()
-
             if data.get('media_type') == 'audio':
                 self.wave_worker.add_task(data['path'], data['uid'])
             if data.get('media_type') == 'video':
@@ -162,6 +157,10 @@ class AssetLoader(QObject):
                     i.thumbnail_start = QPixmap(start_p)
                 if end_p and os.path.exists(end_p):
                     i.thumbnail_end = QPixmap(end_p)
+                i._last_render_time = 0 
+                i.update_cache()
+                i.update()
+                i.thumbnail_end = QPixmap(end_p)
                 i.update_cache()
                 i.update()
 
@@ -169,15 +168,12 @@ class AssetLoader(QObject):
         """Goal 19: Safe shutdown sequence to prevent race conditions."""
         self._shutting_down = True
         self.mw.logger.info("[SHUTDOWN] Initiating safe teardown...")
-
         self.thumb_worker.stop()
         self.wave_worker.stop()
         self.proxy_worker.stop()
-
         self.mw.logger.info("[SHUTDOWN] Waiting for ThreadPool tasks...")
         if not self.thread_pool.waitForDone(3000):
             self.mw.logger.warning("[SHUTDOWN] ThreadPool timed out. Active probes may crash.")
-
         workers = [self.thumb_worker, self.wave_worker, self.proxy_worker]
         for w in workers:
             if not w.wait(2000):

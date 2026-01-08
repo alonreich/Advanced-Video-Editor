@@ -31,7 +31,6 @@ class RenderWorker(QThread):
             else:
                 w, h = (1080, 1920) if "Portrait" in self.res else (1920, 1080)
             gen = FilterGraphGenerator(self.clips, w, h, self.vols, self.mutes)
-
             inputs, f_str, v_map, a_map, _ = gen.build(is_export=True)
             gpu_codec = BinaryManager.get_best_encoder(self.logger)
             cmd = [BinaryManager.get_executable('ffmpeg'), '-y', '-hide_banner']
@@ -68,7 +67,6 @@ class RenderWorker(QThread):
     def read_log(self):
         """Reads FFmpeg output and parses for progress."""
         data = self.process.readAllStandardOutput().data().decode(errors='ignore').strip()
-
         self.logger.debug(f"FFmpeg: {data}")
 
     def render_fragment(self, inputs, f_str, v_map, a_map, frag_path):

@@ -39,6 +39,7 @@ class TrackHeaderWidget(QWidget):
 class TrackHeaders(QWidget):
     tracks_reordered = pyqtSignal(int, int)
     track_volume_changed = pyqtSignal(int, float)
+
     def __init__(self, num_tracks=2, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)

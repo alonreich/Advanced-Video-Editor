@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import QMessageBox, QInputDialog, QApplication, QAction
 from PyQt5.QtCore import QTimer, Qt, QByteArray
 
 class ProjectController:
+
     def __init__(self, main_window):
         self.mw = main_window
         self.pm = main_window.pm
@@ -32,7 +33,6 @@ class ProjectController:
             asset_data = data.get('assets', [])
             self.mw.media_pool.clear()
             self.mw.timeline.load_state(timeline_data)
-
             self.mw.history.undo_stack.clear()
             self.mw.history.redo_stack.clear()
             self.mw.history.current_state_map = {c['uid']: copy.deepcopy(c) for c in timeline_data}
@@ -47,7 +47,6 @@ class ProjectController:
                 if file_path and file_path not in seen_assets:
                     self.mw.media_pool.add_file(file_path)
                     seen_assets.add(file_path)
-
                 self.mw.asset_loader.regenerate_assets(item)
             self.mw.setWindowTitle(f"Advanced Video Editor - {self.pm.project_name}")
             self.mw.save_state_for_undo()

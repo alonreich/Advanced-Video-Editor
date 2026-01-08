@@ -86,7 +86,6 @@ class ClipItem(QGraphicsRectItem):
         is_audio = self.model.media_type == 'audio'
         is_out_of_sync = False
         if self.model.linked_uid and self.scene():
-
             for item in self.scene().items():
                 if isinstance(item, ClipItem) and item.uid == self.model.linked_uid:
                     if abs(item.model.start - self.model.start) > 0.001:
@@ -122,23 +121,18 @@ class ClipItem(QGraphicsRectItem):
 
     def set_speed(self, speed):
         """Goal 2: Change speed with strict bidirectional collision detection."""
-
         source_dur = self.model.duration * self.model.speed
         new_dur = source_dur / speed
         new_start = self.model.start
         new_end = new_start + new_dur
-
         if self.scene():
             for item in self.scene().items():
-
                 if isinstance(item, ClipItem) and item != self and item.track == self.track:
                     n_start = item.model.start
                     n_end = n_start + item.model.duration
-
                     if (new_start < n_end - 0.001) and (new_end > n_start + 0.001):
                         self.logger.warning(f"[COLLISION] Speed change blocked. Overlap with '{item.name}' [{n_start:.2f}s - {n_end:.2f}s]")
                         return
-
         self.speed = speed
         self.model.speed = speed
         self.model.duration = new_dur

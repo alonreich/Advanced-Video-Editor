@@ -5,6 +5,7 @@ from clip_item import ClipItem
 from model import ClipModel
 
 class TimelineOperations:
+
     def __init__(self, view):
         self.view = view 
 
@@ -19,22 +20,22 @@ class TimelineOperations:
         target_track = -1
         s1 = clip_item.model.start
         e1 = clip_item.model.start + clip_item.model.duration
-        for t in range(start_t, self.view.num_tracks):
+        for t in range(start_t, 50):
             is_blocked = False
             for item in self.view.scene.items():
                 if isinstance(item, ClipItem) and item.track == t:
                     s2 = item.model.start
                     e2 = item.model.start + item.model.duration
-                    if max(s1, s2) < min(e1, e2):
+                    if (s1 < e2 - 0.001) and (s1 + clip_item.model.duration > s2 + 0.001):
                         is_blocked = True
                         break
             if not is_blocked:
                 target_track = t
                 break
-        if target_track == -1:
-            self.view.mw.timeline.add_track()
-            target_track = self.view.num_tracks - 1
-            self.view.logger.info(f"[AUDIO-SPLIT] All lanes blocked. Created Track {target_track}")
+        if target_track == -1 or target_track >= self.view.num_tracks:
+            while self.view.num_tracks <= target_track:
+                self.view.mw.timeline.add_track()
+            self.view.logger.info(f"[AUDIO-SPLIT] All lanes blocked. Dynamic expansion to Track {target_track}")
         audio_data = clip_item.model.to_dict()
         audio_data.update({
             'uid': str(uuid.uuid4()),
@@ -49,27 +50,24 @@ class TimelineOperations:
         clip_item.model.linked_uid = audio_data['uid']
         new_audio_item = self.view.add_clip(audio_data)
         clip_item.model.has_audio = False
-
         if hasattr(self.view.mw, 'asset_loader'):
             self.view.mw.asset_loader.regenerate_assets(new_audio_item.model.to_dict())
-            
+        self.view.update_tracks()
+        self.view.mw.save_state_for_undo()
         self.view.mw.playback.mark_dirty(serious=True)
         self.view.data_changed.emit()
         self.view.scene.update()
         self.view.mw.save_state_for_undo()
 
     def get_snapped_x(self, x_pos, track_idx=None, ignore_items=None, threshold=20):
-
         playhead_x = self.view.playhead_pos * self.view.scale_factor
         extra_snaps = []
         selected = self.view.get_selected_item()
         if selected and hasattr(selected.model, 'scene_cuts'):
             extra_snaps = [(t + selected.model.start) * self.view.scale_factor for t in selected.model.scene_cuts]
-        
         if abs(x_pos - playhead_x) < (threshold * 2):
             self._draw_snap_line(playhead_x)
             return playhead_x
-            
         snaps = [0]
         if ignore_items is None: ignore_items = []
         for item in self.view.scene.items():
@@ -78,17 +76,18 @@ class TimelineOperations:
                 sx, ex = item.x(), item.x() + item.rect().width()
                 if abs(x_pos - sx) < eff_th: snaps.append(sx)
                 if abs(x_pos - ex) < eff_th: snaps.append(ex)
-        
+                if ignore_items and hasattr(ignore_items[0], 'rect'):
+                    w = ignore_items[0].rect().width()
+                    if abs((x_pos + w) - sx) < eff_th: snaps.append(sx - w)
+                    if abs((x_pos + w) - ex) < eff_th: snaps.append(ex - w)
         snaps.extend(extra_snaps)
         closest, min_dist = None, float('inf')
         for s in snaps:
             dist = abs(x_pos - s)
             if dist < min_dist: min_dist, closest = dist, s
-            
         if min_dist <= threshold and closest is not None:
             self._draw_snap_line(closest)
             return closest
-            
         if self.view.snap_line:
             self.view.snap_line.hide()
         return x_pos
@@ -117,10 +116,8 @@ class TimelineOperations:
         if s_idx == t_idx: return
         self.view.scene.blockSignals(True)
         try:
-
             items = [i for i in self.view.scene.items() if isinstance(i, ClipItem)]
             src_items = [i for i in items if i.track == s_idx]
-            
             if s_idx < t_idx:
                 for i in items:
                     if s_idx < i.track <= t_idx:
@@ -133,7 +130,6 @@ class TimelineOperations:
                         i.track += 1
                         i.model.track = i.track
                         i.setY(i.track * self.view.track_height + 30)
-
             for i in src_items:
                 i.track = t_idx
                 i.model.track = t_idx

@@ -18,23 +18,18 @@ class TimelineContainer(QWidget):
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
-
         self.header_scroll = QScrollArea()
         self.header_scroll.setFixedWidth(120)
         self.header_scroll.setWidgetResizable(True)
         self.header_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.header_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.header_scroll.setFrameShape(QScrollArea.NoFrame)
-
         self.track_headers = TrackHeaders()
         self.header_scroll.setWidget(self.track_headers)
-
         self.timeline_view = TimelineView(main_window=main_window, track_headers=self.track_headers)
-
         self.timeline_view.verticalScrollBar().valueChanged.connect(
             self.header_scroll.verticalScrollBar().setValue
         )
-
         self.main_layout.addWidget(self.header_scroll)
         self.main_layout.addWidget(self.timeline_view)
         self.timeline_view.time_updated.connect(self.time_updated)
@@ -61,7 +56,6 @@ class TimelineContainer(QWidget):
             highest_track = -1
         else:
             highest_track = max(c.get('track', 0) for c in clips)
-
         if highest_track < 1:
             desired_tracks = 2
         else:

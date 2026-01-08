@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox
 from render_worker import RenderWorker
 
 class ExportDialog(QDialog):
+
     def __init__(self, timeline_state, track_vols, track_mutes, res_mode, parent=None):
         super().__init__(parent)
         self.state = timeline_state
@@ -39,9 +40,7 @@ class ExportDialog(QDialog):
             end = clip.get('start', 0.0) + clip.get('dur', 0.0)
             if end > max_duration:
                 max_duration = end
-
         is_high_fps = "60" in self.res_mode or "120" in self.res_mode
-
         if "2160" in self.res_mode or "3840" in self.res_mode:
             video_mbps = 68 if is_high_fps else 45
         elif "1440" in self.res_mode:
@@ -50,9 +49,7 @@ class ExportDialog(QDialog):
             video_mbps = 12 if is_high_fps else 8
         else:
             video_mbps = 5
-            
         total_mbps = video_mbps + 0.32
-
         size_mb = (total_mbps * max_duration) / 8
         mins = int(max_duration // 60)
         secs = int(max_duration % 60)

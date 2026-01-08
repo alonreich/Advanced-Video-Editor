@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QGridLayout, QPushButt
 from PyQt5.QtCore import Qt
 
 class ShortcutsDialog(QDialog):
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Keyboard Shortcuts")
@@ -12,13 +13,11 @@ class ShortcutsDialog(QDialog):
             .key { color: #4A90E2; font-weight: bold; font-family: 'Consolas'; }
             .desc { color: #AAA; }
         """)
-        
         layout = QVBoxLayout(self)
         title = QLabel("Command Reference")
         title.setStyleSheet("font-size: 18px; font-weight: bold; color: white; margin-bottom: 10px;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-
         grid = QGridLayout()
         shortcuts = [
             ("C", "Toggle Interactive Crop Mode"),
@@ -32,20 +31,15 @@ class ShortcutsDialog(QDialog):
             ("Ctrl + Arrows", "Aggressive Seek (3s)"),
             ("Space", "Play / Pause")
         ]
-
         for i, (key, desc) in enumerate(shortcuts):
             k_lbl = QLabel(key)
             k_lbl.setProperty("class", "key")
             k_lbl.setStyleSheet("color: #4A90E2; font-weight: bold;")
-            
             d_lbl = QLabel(desc)
             d_lbl.setStyleSheet("color: #AAA;")
-            
             grid.addWidget(k_lbl, i, 0)
             grid.addWidget(d_lbl, i, 1)
-
         layout.addLayout(grid)
-        
         btn_close = QPushButton("Close")
         btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.clicked.connect(self.accept)

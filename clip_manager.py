@@ -2,6 +2,7 @@ import uuid
 from clip_item import ClipItem
 
 class ClipManager:
+
     def __init__(self, main_window):
         self.mw = main_window
         self.undo_lock = False
@@ -68,12 +69,10 @@ class ClipManager:
         self.mw.inspector.set_clip([])
         self.mw.timeline.data_changed.emit()
         self.mw.timeline.fit_to_view()
-
         earliest_delete = min([item.model.start for item in selected_items]) if selected_items else 0
-        
-        for track_num in range(self.mw.timeline.timeline_view.num_tracks):
-            if self.mw.timeline.timeline_view.check_for_gaps(track_num, earliest_delete):
-                break
+        affected_tracks = set(item.model.track for item in selected_items)
+        for track_num in sorted(list(affected_tracks)):
+            self.mw.timeline.timeline_view.check_for_gaps(track_num, earliest_delete)
         self.mw.save_state_for_undo()
 
     def on_param_changed(self, param, value):
@@ -165,24 +164,19 @@ class ClipManager:
         """Goal 5: Deletes selection and shifts subsequent clips without prompting."""
         selected_items = self.mw.timeline.get_selected_items()
         if not selected_items: return
-
         earliest_start = min([item.model.start for item in selected_items])
-
         latest_end = max([item.model.start + item.model.duration for item in selected_items])
         shift_amount = latest_end - earliest_start
-
         for item in selected_items:
             if item.model.linked_uid:
                 for partner in self.mw.timeline.scene.items():
                     if isinstance(partner, ClipItem) and partner.model.uid == item.model.linked_uid:
                         self.mw.timeline.scene.removeItem(partner)
             self.mw.timeline.scene.removeItem(item)
-
         for item in self.mw.timeline.scene.items():
             if isinstance(item, ClipItem):
                 if item.model.start >= latest_end - 0.001:
                     item.model.start -= shift_amount
-        
         self.mw.timeline.update_clip_positions()
         self.mw.timeline.update_tracks()
         self.mw.inspector.set_clip([])

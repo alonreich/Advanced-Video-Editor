@@ -1,6 +1,7 @@
 import logging
 
 class FilterGraphGenerator:
+
     def __init__(self, clips, width=1920, height=1080, volumes=None, mutes=None):
         self.clips = clips
         self.w = width
@@ -26,43 +27,32 @@ class FilterGraphGenerator:
             path = c.get('path')
             if not path:
                 continue
-
             norm = path.replace('\\', '/')
-
             escaped_path = norm.replace("'", "'\\''")
-            
             if norm not in file_map:
                 file_map[norm] = len(inputs)
                 inputs.append(norm)
-
             c['escaped_path'] = escaped_path
         if not inputs:
             total_duration = duration if duration else 10.0
             return [], "", "[vo]", "[ao]", False
-
         visible_video = [c for c in raw_clips if c.get('width', 0) > 0]
-
         sorted_by_layer = sorted(visible_video, key=lambda x: -x['track'])
         occluded_uids = set()
-        
         for i, lower_clip in enumerate(visible_video):
             l_start = lower_clip['start']
             l_end = l_start + lower_clip['dur']
-
             visible_intervals = [(l_start, l_end)]
-
             for top_clip in [c for c in visible_video if c['track'] < lower_clip['track']]:
                 is_occluder = (top_clip.get('scale_x', 1.0) >= 1.0 and 
                                top_clip.get('scale_y', 1.0) >= 1.0 and 
                                top_clip.get('opacity', 1.0) >= 1.0 and
                                top_clip.get('crop_x1', 0.0) == 0.0 and 
                                top_clip.get('crop_y1', 0.0) == 0.0)
-                
                 if is_occluder:
                     t_start, t_end = top_clip['start'], top_clip['start'] + top_clip['dur']
                     new_intervals = []
                     for v_start, v_end in visible_intervals:
-
                         if t_start <= v_start and t_end >= v_end:
                             continue
                         elif t_start > v_start and t_end < v_end:
@@ -75,14 +65,11 @@ class FilterGraphGenerator:
                             new_intervals.append((v_start, v_end))
                     visible_intervals = new_intervals
                 if not visible_intervals: break
-
             if not visible_intervals or sum(e - s for s, e in visible_intervals) < 0.033:
                 occluded_uids.add(lower_clip['uid'])
-
         visible_video = [c for c in visible_video if c['uid'] not in occluded_uids]
         if occluded_uids:
             self.logger.info(f"[RENDER] Occlusion aware: Dropped {len(occluded_uids)} hidden clips from graph.")
-
         video_clips = sorted(visible_video, key=lambda x: (-x['track'], x['start']))
         video_stream_counters = {idx: 0 for idx in file_map.values()}
         audio_clips = [c for c in raw_clips if c.get('has_audio', True)]
@@ -90,13 +77,12 @@ class FilterGraphGenerator:
         if inputs:
             p0 = inputs[0]
             main_input_used_for_video = any(c['path'].replace('\\', '/') == p0 for c in visible_video)
-        
         video_stream_usage = {}
         for clip in video_clips:
             idx = file_map[clip['path'].replace('\\', '/')]
             video_stream_usage[idx] = video_stream_usage.get(idx, 0) + 1
         total_dur = max([c['start'] + c['dur'] for c in self.clips], default=10)
-        filter_parts.append(f"color=c=black:s={self.w}x{self.h}:d={total_dur+5:.3f}[base]")
+        filter_parts.append(f"color=c=black:s={self.w}x{self.h}:d={total_dur:.3f}[base]")
         last_v = "[base]"
         for i, clip in enumerate(video_clips):
             idx = file_map[clip['path'].replace('\\', '/')]
@@ -108,8 +94,11 @@ class FilterGraphGenerator:
                 input_stream = f"[{idx}:v]"
             lbl = f"v{i}"
             speed = float(clip['speed'])
+            clip_rel_offset = max(0, start_time - clip['start'])
+            effective_source_in = clip['source_in'] + (clip_rel_offset * speed)
+            effective_duration = (clip['dur'] - clip_rel_offset) * speed
             chain = [
-                f"{input_stream}trim=start={clip['source_in']}:duration={clip['dur'] * speed}",
+                f"{input_stream}trim=start={effective_source_in}:duration={max(0.1, effective_duration)}",
                 "setpts=PTS-STARTPTS",
                 f"setpts=PTS*{1/speed:.6f}"
             ]
@@ -146,7 +135,10 @@ class FilterGraphGenerator:
             filter_parts.append(",".join(chain) + f"[{lbl}_p]")
             x = (self.w - target_w) / 2 + (self.w * clip.get('pos_x', 0))
             y = (self.h - target_h) / 2 - (self.h * clip.get('pos_y', 0))
-            filter_parts.append(f"{last_v}[{lbl}_p]overlay=x={int(x)}:y={int(y)}:eof_action=pass[bg{i}]")
+            t_start = max(0, clip['start'] - start_time)
+            t_end = t_start + clip['dur']
+            enable_str = f":enable='between(t,{t_start:.3f},{t_end:.3f})'"
+            filter_parts.append(f"{last_v}[{lbl}_p]overlay=x={int(x)}:y={int(y)}{enable_str}:eof_action=pass[bg{i}]")
             last_v = f"[bg{i}]"
         audio_stream_usage = {}
         for clip in audio_clips:
@@ -154,14 +146,11 @@ class FilterGraphGenerator:
                 continue
             idx = file_map[clip['path'].replace('\\', '/')]
             audio_stream_usage[idx] = audio_stream_usage.get(idx, 0) + 1
-
         for idx, count in audio_stream_usage.items():
             if count > 1:
-
                 outputs = "".join([f"[src_aud_{idx}_{k}]" for k in range(count)])
                 filter_parts.insert(0, f"[{idx}:a]asplit={count}{outputs}")
             else:
-
                 pass
         audio_stream_counters = {idx: 0 for idx in audio_stream_usage}
         audio_outs = []
@@ -171,27 +160,27 @@ class FilterGraphGenerator:
             input_idx = file_map[clip['path'].replace('\\', '/')]
             if audio_stream_usage.get(input_idx, 0) > 1:
                 n = audio_stream_counters[input_idx]
-                src = f"[aud_{input_idx}_{n}]"
+                src = f"[src_aud_{input_idx}_{n}]"
                 audio_stream_counters[input_idx] += 1
             else:
                 src = f"[{input_idx}:a]"
             audio_pad = f"[a{i}_out]"
             base_vol = (clip.get('volume', 100) / 100.0) * self.vols.get(clip['track'], 1.0)
-
             is_vo = "VO_" in clip.get('name', '') or clip.get('track') == -1
             duck_filter = ""
             if not is_vo:
                 for vo_clip in [c for c in audio_clips if "VO_" in c.get('name', '') or c.get('track') == -1]:
                     vo_start = vo_clip['start']
                     vo_end = vo_start + vo_clip['dur']
-
                     duck_filter = f",volume=0.18:enable='between(t,{vo_start},{vo_end})'"
-            
             vol_str = f"volume={base_vol:.2f}{duck_filter}"
             speed = float(clip.get('speed', 1.0))
-            src_duration = clip['dur'] * speed
+            clip_rel_offset = max(0, start_time - clip['start'])
+            effective_audio_in = clip['source_in'] + (clip_rel_offset * speed)
+            remaining_dur = max(0.1, clip['dur'] - clip_rel_offset)
+            src_duration = remaining_dur * speed
             audio_chain = [
-                f"{src}atrim=start={clip['source_in']}:duration={src_duration:.6f}",
+                f"{src}atrim=start={effective_audio_in}:duration={src_duration:.6f}",
                 "asetpts=PTS-STARTPTS",
             ]
             if speed != 1.0:
@@ -207,9 +196,10 @@ class FilterGraphGenerator:
                     atempo_filters.append(f"atempo={temp_speed}")
                 if atempo_filters:
                     audio_chain.append(",".join(atempo_filters))
+            relative_start = max(0, clip['start'] - start_time)
             audio_chain.extend([
                 vol_str,
-                f"adelay={int(clip['start'] * 1000)}:all=1{audio_pad}"
+                f"adelay={int(relative_start * 1000)}:all=1{audio_pad}"
             ])
             filter_parts.append(",".join(audio_chain))
             audio_outs.append(audio_pad)

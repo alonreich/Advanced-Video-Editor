@@ -31,6 +31,7 @@ from shortcuts_dialog import ShortcutsDialog
 from clip_item import ClipItem
 
 class MainWindow(QMainWindow):
+
     def __init__(self, base_dir, file_to_load=None):
         super().__init__()
         BinaryManager.ensure_env()
@@ -51,6 +52,7 @@ class MainWindow(QMainWindow):
         self.recorder.recording_started.connect(self.on_recording_started)
         self.recorder.recording_finished.connect(self.on_recording_finished)
         self.recording_start_time = 0.0
+        self._seek_repeats = 0
         self.setup_ui()
         self.initial_layout_state = self.saveState()
         self.initial_geometry = self.saveGeometry()
@@ -84,7 +86,6 @@ class MainWindow(QMainWindow):
         self.preview.play_requested.connect(self.toggle_play)
         self.preview.interaction_started.connect(self.clip_ctrl.undo_lock_acquire)
         self.preview.interaction_ended.connect(self.clip_ctrl.undo_lock_release)
-
         self.inspector.track_mute_toggled.connect(lambda t, m: (self.track_mutes.update({t:m}), self.mark_dirty()))
         self.inspector.param_changed.connect(self.clip_ctrl.on_param_changed)
         self.inspector.resolution_changed.connect(self.on_resolution_switched)
@@ -185,7 +186,6 @@ class MainWindow(QMainWindow):
         self.act_proxy.setToolTip("Toggle proxy media usage for faster editing")
         self.act_proxy.setCheckable(True)
         self.act_proxy.setChecked(True)
-
         self.act_lock_zoom = tb.addAction("🔒 Lock Zoom")
         self.act_lock_zoom.setToolTip("Prevent the timeline from auto-zooming during edits")
         self.act_lock_zoom.setCheckable(True)
@@ -232,9 +232,21 @@ class MainWindow(QMainWindow):
             self.inspector.btn_crop_toggle.setChecked(self.preview.overlay.crop_mode)
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            self.toggle_play()
+            return
+        if event.key() in [Qt.Key_Left, Qt.Key_Right] and not self.preview.overlay.crop_mode:
+            if event.isAutoRepeat(): self._seek_repeats += 1
+            else: self._seek_repeats = 0
+            is_ctrl = bool(event.modifiers() & Qt.ControlModifier)
+            base = 3.0 if is_ctrl else 0.016
+            accel = 1.0 + (self._seek_repeats * 0.2) 
+            delta = (-base * accel) if event.key() == Qt.Key_Left else (base * accel)
+            self.player_node.seek_relative(delta)
+            self.timeline.set_time(self.player_node.get_time() + self.playback.start_offset)
+            return
         if event.key() == Qt.Key_C:
             self.toggle_crop_mode(not self.preview.overlay.crop_mode)
-            event.accept()
             return
         if event.key() == Qt.Key_V:
             if not self.recorder.is_recording:
@@ -251,6 +263,11 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() in [Qt.Key_Left, Qt.Key_Right]:
+            self._seek_repeats = 0
+        super().keyReleaseEvent(event)
 
     def on_recording_started(self):
         self.statusBar().showMessage("ðŸ”´ RECORDING VOICEOVER...")

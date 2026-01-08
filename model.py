@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields, asdict
 import uuid
-
 @dataclass
+
 class ClipModel:
     path: str
     track: int
@@ -31,8 +31,8 @@ class ClipModel:
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     start_freeze: float = 0.0
     end_freeze: float = 0.0
-
     @classmethod
+
     def from_dict(cls, data):
         if 'dur' in data and 'duration' not in data:
             data = data.copy()
