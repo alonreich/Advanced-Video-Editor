@@ -1,5 +1,6 @@
 from PyQt5.QtGui import QPainter, QLinearGradient, QColor, QBrush, QPen, QPixmap, QFont
 from PyQt5.QtCore import Qt, QRectF
+import constants
 
 class ClipPainter:
     @staticmethod
@@ -8,17 +9,17 @@ class ClipPainter:
         """Draws the background fill only."""
         grad = QLinearGradient(0, 0, 0, rect.height())
         if is_colliding:
-            grad.setColorAt(0, QColor(255, 60, 60))
-            grad.setColorAt(1, QColor(140, 0, 0))
+            grad.setColorAt(0, QColor(constants.COLOR_ERROR).lighter(50))
+            grad.setColorAt(1, QColor(constants.COLOR_ERROR).darker(150))
         elif is_out_of_sync:
-            grad.setColorAt(0, QColor(180, 40, 40))
-            grad.setColorAt(1, QColor(100, 20, 20))
+            grad.setColorAt(0, QColor(constants.COLOR_ERROR).lighter(20))
+            grad.setColorAt(1, QColor(constants.COLOR_ERROR).darker(100))
         elif is_audio:
-            grad.setColorAt(0, QColor(40, 80, 50))
-            grad.setColorAt(1, QColor(20, 50, 30))
+            grad.setColorAt(0, QColor(constants.COLOR_SUCCESS).lighter(50))
+            grad.setColorAt(1, QColor(constants.COLOR_SUCCESS).darker(100))
         else:
-            grad.setColorAt(0, QColor(50, 50, 50))
-            grad.setColorAt(1, QColor(30, 30, 30))
+            grad.setColorAt(0, QColor(constants.COLOR_BACKGROUND).lighter(50))
+            grad.setColorAt(1, QColor(constants.COLOR_BACKGROUND).darker(50))
         painter.setBrush(QBrush(grad))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
@@ -32,7 +33,7 @@ class ClipPainter:
             border_color = QColor(255, 215, 0)
             border_width = 3
         elif is_out_of_sync:
-            border_color = QColor(255, 0, 0)
+            border_color = QColor(constants.COLOR_ERROR)
             border_width = 2
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(border_color, border_width))

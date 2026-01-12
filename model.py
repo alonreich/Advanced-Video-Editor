@@ -31,6 +31,7 @@ class ClipModel:
     uid: str = field(default_factory=lambda: str(uuid.uuid4()))
     start_freeze: float = 0.0
     end_freeze: float = 0.0
+    is_main_audio_source: bool = False
     @classmethod
 
     def from_dict(cls, data):

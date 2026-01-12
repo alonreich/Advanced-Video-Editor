@@ -17,60 +17,63 @@ class BinaryManager:
         src_dll = os.path.join(bin_dir, "libmpv-2.dll")
         dst_dll = os.path.join(bin_dir, "mpv-1.dll")
         if os.path.exists(src_dll):
-            if os.path.exists(dst_dll) and os.path.getsize(src_dll) == os.path.getsize(dst_dll):
-                logger.info(f"[BINARY] mpv-1.dll already exists and is up-to-date. Skipping copy.")
-            else:
+            if os.path.exists(dst_dll):
                 try:
-                    shutil.copy2(src_dll, dst_dll)
-                    logger.info(f"[BINARY] Auto-patched mpv-1.dll from libmpv-2.dll")
-                except PermissionError:
-                    logger.critical(f"[BINARY] ERROR: Cannot patch mpv-1.dll. It is likely in use by another process. Please close all instances of the application and try again.")
-                except Exception as e:
-                    logger.error(f"[BINARY] Failed to patch DLL: {e}")
+                    with open(dst_dll, 'a'):
+                        pass
+                except IOError:
+                    logger.info("[BINARY] mpv-1.dll is locked by another instance. Using existing file.")
+                    return
+                if os.path.getsize(src_dll) == os.path.getsize(dst_dll):
+                    logger.info("[BINARY] mpv-1.dll is up-to-date.")
+                    return
+            try:
+                shutil.copy2(src_dll, dst_dll)
+                logger.info(f"[BINARY] Auto-patched mpv-1.dll from libmpv-2.dll")
+            except (PermissionError, IOError):
+                logger.warning("[BINARY] Permission denied during patch. Another instance likely finished the job.")
+            except Exception as e:
+                logger.error(f"[BINARY] Failed to patch DLL: {e}")
         os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         os.environ["MPV_HOME"] = bin_dir
-        local_vlc = os.path.join(bin_dir, "libvlc.dll")
-        if os.path.exists(local_vlc):
-            if BinaryManager._is_64bit(local_vlc):
-                os.environ["PYTHON_VLC_MODULE_PATH"] = bin_dir
-                logger.info(f"[BINARY] Confirmed 64-bit VLC in local binaries.")
-                BinaryManager.purge_vlc_cache(bin_dir, logger)
-            else:
-                logger.critical("[BINARY] Local libvlc.dll is NOT 64-bit. VLC will fail to load.")
-        else:
-            logger.warning("[BINARY] Local libvlc.dll not found in binaries folder.")
-        BinaryManager.verify_vlc_plugins(bin_dir, logger)
     @staticmethod
 
     def get_best_encoder(logger=None):
         """Goal 20: Centralized, cached GPU detection."""
-        if BinaryManager._cached_encoder: 
+        if BinaryManager._cached_encoder:
             return BinaryManager._cached_encoder
         if not logger:
             logger = logging.getLogger("Advanced_Video_Editor")
+        preferred_encoders = [
+            ('av1_nvenc', "NVIDIA AV1"),
+            ('hevc_nvenc', "NVIDIA HEVC"),
+            ('h264_nvenc', "NVIDIA H264"),
+            ('h264_qsv', "Intel QuickSync"),
+            ('h264_amf', "AMD AMF"),
+        ]
         try:
             ffmpeg_bin = BinaryManager.get_executable('ffmpeg')
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            output = subprocess.check_output([ffmpeg_bin, '-encoders'], startupinfo=si, stderr=subprocess.STDOUT).decode('utf-8', errors='ignore')
-            if 'av1_nvenc' in output:
-                logger.info("[RENDER] NVIDIA 40-Series detected. Using AV1_NVENC.")
-                BinaryManager._cached_encoder = 'av1_nvenc'
-            elif 'hevc_nvenc' in output:
-                logger.info("[RENDER] NVIDIA GPU detected. Using HEVC_NVENC.")
-                BinaryManager._cached_encoder = 'hevc_nvenc'
-            elif 'h264_nvenc' in output:
-                logger.info("[RENDER] NVIDIA GPU detected. Using H264_NVENC.")
-                BinaryManager._cached_encoder = 'h264_nvenc'
-            elif 'h264_qsv' in output:
-                logger.info("[RENDER] Intel QuickSync detected. Using H264_QSV.")
-                BinaryManager._cached_encoder = 'h264_qsv'
-            elif 'h264_amf' in output:
-                logger.info("[RENDER] AMD GPU detected. Using H264_AMF.")
-                BinaryManager._cached_encoder = 'h264_amf'
-            else:
-                logger.warning("[RENDER] No GPU encoder found. Falling back to libx264.")
-                BinaryManager._cached_encoder = 'libx264'
+            output = subprocess.check_output(
+                [ffmpeg_bin, '-encoders'], 
+                startupinfo=si, 
+                stderr=subprocess.STDOUT
+            ).decode('utf-8', errors='ignore')
+            available_encoders = set()
+            for line in output.splitlines():
+                line = line.strip()
+                if line and not line.startswith("="):
+                    parts = line.split()
+                    if len(parts) > 1 and parts[0] == 'V.....':
+                        available_encoders.add(parts[1])
+            for encoder_name, friendly_name in preferred_encoders:
+                if encoder_name in available_encoders:
+                    logger.info(f"[RENDER] GPU encoder selected: {friendly_name} ({encoder_name})")
+                    BinaryManager._cached_encoder = encoder_name
+                    return BinaryManager._cached_encoder
+            logger.warning("[RENDER] No preferred GPU encoder found. Falling back to libx264.")
+            BinaryManager._cached_encoder = 'libx264'
         except Exception as e:
             logger.warning(f"[RENDER] HW detection failed: {e}")
             BinaryManager._cached_encoder = 'libx264'

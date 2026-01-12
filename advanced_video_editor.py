@@ -51,10 +51,12 @@ if __name__ == "__main__":
     sys.stderr = StreamToLogger(logger, logging.ERROR)
     logger.info("=== Booting Advanced Video Editor ===")
     logger.info("Importing MainWindow...")
+
     from main_window import MainWindow
     logger.info("Creating QApplication...")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
     from PyQt5.QtGui import QPalette, QColor
     p = app.palette()
     p.setColor(QPalette.Window, QColor(53, 53, 53))

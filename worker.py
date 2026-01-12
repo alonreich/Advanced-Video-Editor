@@ -30,6 +30,7 @@ class ThumbnailWorker(QThread):
         """Goal 14: Forced GPU hijacking for 40-Series optimization."""
         if self.checked_hwaccel:
             return self.hwaccel_args, self.scale_filter
+
         from binary_manager import BinaryManager
         BinaryManager.ensure_env()
         gpu_codec = BinaryManager.get_best_encoder(self.logger)
@@ -65,6 +66,7 @@ class ThumbnailWorker(QThread):
         uid = task['uid']
         path = task['path']
         dur = task['dur']
+
         import hashlib
         h = hashlib.md5(f"{path}_{dur}".encode()).hexdigest()
         cache_dir = os.path.join(self.project_dir, "cache", "thumbnails")
@@ -177,6 +179,7 @@ class ProxyWorker(QThread):
     def process_task(self, task):
         uid = task['uid']
         path = task['path']
+
         import hashlib
         h = hashlib.md5(path.encode()).hexdigest()
         cache_dir = os.path.join(self.project_dir, "cache", "proxies")

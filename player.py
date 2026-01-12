@@ -72,11 +72,12 @@ class MPVPlayer(QWidget):
             pass
         self._playing = False
 
-    def seek(self, seconds: float):
+    def seek(self, seconds: float, fast=False):
+        """Goal 8: Adaptive seeking. Use fast=True to hit keyframes only."""
         if not self.mpv:
             return
         try:
-            mode = "absolute+keyframes" 
+            mode = "absolute+keyframes" if fast else "absolute+exact"
             self.mpv.command("seek", str(seconds), mode)
         except Exception as e:
             if "-12" in str(e):
@@ -128,22 +129,6 @@ class MPVPlayer(QWidget):
             self._playing = False
             return 0.0
 
-    def _ffmpeg_labels_to_mpv(self, graph: str) -> str:
-        """Goal 8: Robust label mapping to prevent MPV backend crashes during gap seeking."""
-
-        def repl_v(m):
-            idx = int(m.group(1))
-            return f"[vid{idx + 1}]"
-
-        def repl_a(m):
-            idx = int(m.group(1))
-            return f"[aid{idx + 1}]"
-        graph = re.sub(r"\[(\d+):v\]", repl_v, graph)
-        graph = re.sub(r"\[(\d+):a\]", repl_a, graph)
-        graph = re.sub(r"\[v(\d+)\]", r"[vid\1]", graph)
-        graph = re.sub(r"\[a(\d+)\]", r"[aid\1]", graph)
-        return graph
-
     def play_filter_graph(self, filter_str: str, inputs: list, main_input_used_for_video: bool):
         if not self.mpv:
             self.logger.error("MPV not initialized, cannot play filter graph.")
@@ -160,7 +145,6 @@ class MPVPlayer(QWidget):
             return
         main_input = clean_inputs[0]
         external_files = clean_inputs[1:] if len(clean_inputs) > 1 else []
-        graph = self._ffmpeg_labels_to_mpv(graph)
         try:
             self.mpv.pause = True
             self._playing = False
@@ -168,20 +152,17 @@ class MPVPlayer(QWidget):
                 self.mpv.command("set", "lavfi-complex", "")
             except Exception:
                 pass
-            try:
-                self.mpv.external_files = external_files if external_files else []
-            except Exception:
-                if external_files:
-                    self.mpv.command("set", "external-files", ",".join(external_files))
-                else:
-                    try:
-                        self.mpv.command("set", "external-files", "")
-                    except Exception:
-                        pass
-            self.logger.info(f"Loading main input: {main_input}")
-            self.mpv.command("loadfile", main_input, "replace")
+            if external_files:
+                self.mpv.command("set", "external-files", ",".join(external_files))
+            else:
+                try:
+                    self.mpv.command("set", "external-files", "")
+                except Exception:
+                    pass
             self.logger.info(f"Setting lavfi-complex: {graph}")
             self.mpv.command("set", "lavfi-complex", graph)
+            self.logger.info(f"Loading main input: {main_input}")
+            self.mpv.command("loadfile", main_input, "replace")
             self.mpv.pause = False
             self._playing = True
             self.logger.info("Playback of filter graph initiated.")

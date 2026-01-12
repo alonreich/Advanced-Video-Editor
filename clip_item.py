@@ -5,11 +5,12 @@ from PyQt5.QtGui import QColor, QPixmap, QPainter, QFont, QPen
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from model import ClipModel
 from clip_painter import ClipPainter
+import constants
 
 class ClipItem(QGraphicsRectItem):
 
-    def __init__(self, model: ClipModel, scale=50):
-        super().__init__(0, 0, model.duration * scale, 40)
+    def __init__(self, model: ClipModel, scale=constants.DEFAULT_TIMELINE_SCALE_FACTOR):
+        super().__init__(0, 0, model.duration * scale, constants.TRACK_HEIGHT)
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.model = model
         self.uid = model.uid
@@ -23,7 +24,7 @@ class ClipItem(QGraphicsRectItem):
         self.volume = model.volume
         self.scale = scale
         self.cached_pixmap = None
-        self.setPos(self.start * scale, self.track * 40 + 30)
+        self.setPos(self.start * scale, self.track * constants.TRACK_HEIGHT + constants.RULER_HEIGHT)
         self.setFlag(QGraphicsItem.ItemIsSelectable)
         self.setFlag(QGraphicsItem.ItemIsMovable)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges)
@@ -38,7 +39,7 @@ class ClipItem(QGraphicsRectItem):
         self.thumbnail_end = None
         self.drag_mode = None
         self.is_colliding = False
-        self.handle_width = 8
+        self.handle_width = 20
         self.update_cache()
 
     def update_handle_rects(self):
@@ -98,13 +99,23 @@ class ClipItem(QGraphicsRectItem):
         ClipPainter.draw_waveform(painter, rect, self.waveform_pixmap, self.model, self.scale)
         ClipPainter.draw_fades(painter, rect, self.model, self.scale)
         ClipPainter.draw_selection_border(painter, rect, self.isSelected(), is_out_of_sync)
-        painter.setPen(QColor(255, 50, 50) if is_out_of_sync else Qt.white)
+        painter.setPen(QPen(QColor(255, 50, 50) if is_out_of_sync else Qt.white))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         display_name = f"⚠️ {self.name}" if is_out_of_sync else self.name
         painter.drawText(8, 15, display_name)
         painter.end()
 
     def paint(self, painter, option, widget):
+        """Goal 15: Occlusion-aware rendering to save GPU cycles."""
+        if not self.isVisible():
+            return
+        if self.scene() and self.model.media_type == 'video':
+            for item in self.scene().items(self.scenePos()):
+                if isinstance(item, ClipItem) and item != self:
+                    if item.track < self.track and item.model.media_type == 'video':
+                        if item.rect().contains(item.mapFromItem(self, self.rect().topLeft())) and \
+                           item.rect().contains(item.mapFromItem(self, self.rect().bottomRight())):
+                            return
         if not self.cached_pixmap:
             self.update_cache()
         if self.cached_pixmap and not self.cached_pixmap.isNull():
@@ -137,7 +148,7 @@ class ClipItem(QGraphicsRectItem):
         self.model.speed = speed
         self.model.duration = new_dur
         self.duration = new_dur
-        self.setRect(0, 0, new_dur * self.scale, 40)
+        self.setRect(0, 0, new_dur * self.scale, constants.TRACK_HEIGHT)
         self.update_cache()
 
     def set_volume(self, volume):

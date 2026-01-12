@@ -3,6 +3,7 @@ import sys
 import shutil
 import copy
 import logging
+import subprocess
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QApplication, QAction
 from PyQt5.QtCore import QTimer, Qt, QByteArray
 
@@ -33,9 +34,7 @@ class ProjectController:
             asset_data = data.get('assets', [])
             self.mw.media_pool.clear()
             self.mw.timeline.load_state(timeline_data)
-            self.mw.history.undo_stack.clear()
-            self.mw.history.redo_stack.clear()
-            self.mw.history.current_state_map = {c['uid']: copy.deepcopy(c) for c in timeline_data}
+            self.mw.history.push(timeline_data, force=True)
             self.restore_ui_state(data.get('ui_state', {}))
             seen_assets = set()
             for path in asset_data:
@@ -88,9 +87,19 @@ class ProjectController:
 
     def delete_all_projects(self):
         if QMessageBox.warning(self.mw, "DELETE ALL", "PERMANENTLY DELETE ALL PROJECTS?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
-            for f in ["cache", "projects", "__pycache__"]:
-                shutil.rmtree(os.path.join(self.mw.base_dir, f), ignore_errors=True)
-            os.execl(sys.executable, sys.executable, *sys.argv)
+            for f in ["cache", "projects", "__pycache__", "logs"]:
+                path = os.path.join(self.mw.base_dir, f)
+                if os.path.exists(path):
+                    try:
+                        shutil.rmtree(path, ignore_errors=True)
+                    except Exception as e:
+                        self.logger.error(f"Failed to delete {path}: {e}")
+            self.logger.info("Spawning new process for restart...")
+            try:
+                subprocess.Popen([sys.executable] + sys.argv)
+            except Exception as e:
+                self.logger.error(f"Failed to respawn application: {e}")
+            QApplication.quit()
 
     def populate_menu(self, menu):
         menu.clear()

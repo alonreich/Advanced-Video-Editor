@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QSlider
 from PyQt5.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt5.QtGui import QDrag
+import constants
 
 class TrackHeaderWidget(QWidget):
     volume_changed = pyqtSignal(int, float)
@@ -9,7 +10,7 @@ class TrackHeaderWidget(QWidget):
         super().__init__(parent)
         self.track_idx = track_idx
         self.setFixedWidth(120)
-        self.setFixedHeight(40)
+        self.setFixedHeight(constants.TRACK_HEIGHT)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(2)
@@ -44,7 +45,7 @@ class TrackHeaders(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 30, 0, 0)
+        self.main_layout.setContentsMargins(0, constants.RULER_HEIGHT, 0, 0)
         self.main_layout.setSpacing(0)
         self.headers = []
         for i in range(num_tracks):

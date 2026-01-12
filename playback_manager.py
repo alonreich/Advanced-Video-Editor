@@ -1,5 +1,4 @@
 import logging
-import vlc
 import os
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 from ffmpeg_generator import FilterGraphGenerator
@@ -8,20 +7,23 @@ class PlaybackManager(QObject):
     playhead_updated = pyqtSignal(float)
     state_changed = pyqtSignal(bool)
 
-    def __init__(self, player_node, timeline, inspector):
+    def __init__(self, main_window, player_node, timeline, inspector):
         super().__init__()
+        self.mw = main_window
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.player = player_node
         self.timeline = timeline
         self.inspector = inspector
         self.is_dirty = True
         self.start_offset = 0.0
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._sync_playhead)
-        self.timer.setInterval(33)
         self.canvas_width = 1920
         self.canvas_height = 1080
-        self._seek_timer = QTimer()
+        self.loop_enabled = False
+        self.loop_in = 0.0
+        self.loop_out = 0.0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._sync_playhead)
+        self._seek_timer = QTimer(self)
         self._seek_timer.setSingleShot(True)
         self._seek_timer.setInterval(50)
 
@@ -59,10 +61,10 @@ class PlaybackManager(QObject):
             return
         self._rebuild_and_play(proxy_enabled, track_vols, track_mutes)
 
-    def _rebuild_and_play(self, proxy_enabled, track_vols, track_mutes):
+    def _rebuild_and_play(self, proxy_enabled, track_vols, track_mutes, start_time=None, play_now=True):
         """Rebuilds the FFmpeg filter graph and sends it to the player."""
         self.logger.debug("Rebuilding filter graph for playback...")
-        current_time = self.timeline.playhead_pos
+        current_time = start_time if start_time is not None else self.timeline.playhead_pos
         self.start_offset = current_time
         state = self.timeline.get_state()
         if not state:
@@ -79,19 +81,27 @@ class PlaybackManager(QObject):
             width=self.canvas_width,
             height=self.canvas_height,
             volumes=track_vols,
-            mutes=track_mutes
+            mutes=track_mutes,
+            audio_analysis=self.mw.audio_analysis_results
         )
         inputs, complex_filter, v_pad, a_pad, main_input_used = gen.build(
             start_time=current_time,
             duration=self.timeline.get_content_end(),
             is_export=False
         )
+        if is_scrubbing:
+            complex_filter = complex_filter.replace("null[vo]", "select=not(mod(n\\,5)),setpts=N/FRAME_RATE/TB[vo]")
         try:
             self.player.play_filter_graph(complex_filter, inputs, main_input_used)
-            self.player.play()
+            if play_now:
+                self.player.play()
+                self.timer.start()
+                self.state_changed.emit(True)
+            else:
+                self.player.pause()
+                self.timer.stop()
+                self.state_changed.emit(False)
             self.is_dirty = False
-            self.timer.start()
-            self.state_changed.emit(True)
             self.logger.info(f"Playback started with filter graph at {current_time:.2f}s.")
         except Exception as e:
             self.logger.error(f"[FFMPEG-PLAYBACK] Failed to load complex filter: {e}", exc_info=True)
@@ -113,35 +123,50 @@ class PlaybackManager(QObject):
             self.state_changed.emit(False)
             return
         abs_time = current_player_time + self.start_offset
+        if self.loop_enabled and abs_time >= self.loop_out:
+            self.logger.debug(f"[LOOP] Boundary hit at {abs_time:.2f}s. Snapping back to {self.loop_in:.2f}s.")
+            self.seek_and_sync(self.loop_in)
+            return
         self.playhead_updated.emit(abs_time)
         max_end = self.timeline.get_content_end()
         if max_end > 0 and abs_time >= max_end - 0.01:
             self.player.pause()
             self.timer.stop()
-            self.playhead_updated.emit(max_end)
             self.state_changed.emit(False)
 
     def seek_and_sync(self, time_sec):
         """Standardizes fast seeking by bypassing the blocking sync checks."""
         if getattr(self, '_seeking', False): return
         self._seeking = True
+        should_keep_playing = self.player.is_playing()
         max_dur = self.timeline.get_content_end()
         target_time = max(0.0, min(time_sec, max_dur))
         if self.player.is_playing():
             self.player.pause()
             self.timer.stop()
         if target_time < self.start_offset or target_time > (self.start_offset + 5.0):
-            self._rebuild_and_play(False, self.inspector.mw.track_volumes, self.inspector.mw.track_mutes)
-            self.player.pause()
+            self._rebuild_and_play(
+                False, 
+                self.inspector.mw.track_volumes, 
+                self.inspector.mw.track_mutes, 
+                start_time=target_time,
+                play_now=should_keep_playing
+            )
         else:
-            if target_time < self.start_offset:
-                self._rebuild_and_play(False, self.inspector.mw.track_volumes, self.inspector.mw.track_mutes)
-                self.player.pause()
-            else:
-                self.player.seek(target_time - self.start_offset)
-            self.playhead_updated.emit(target_time)
+            self.player.seek(target_time - self.start_offset)
+            if should_keep_playing:
+                self.player.play()
+                self.timer.start()
+        self.playhead_updated.emit(target_time)
         overlay = getattr(self.inspector.mw.preview, 'overlay', None)
         if overlay:
             overlay.is_loading = False
             overlay.update()
         self._seeking = False
+
+    def set_loop(self, start, end, enabled=True):
+        """Sets the active loop region boundaries."""
+        self.loop_in = max(0.0, start)
+        self.loop_out = max(self.loop_in + 0.1, end)
+        self.loop_enabled = enabled
+        self.logger.info(f"[LOOP] Configured: {self.loop_in:.2f}s -> {self.loop_out:.2f}s")

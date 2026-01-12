@@ -1,54 +1,55 @@
 import os
 import struct
 import time
-from PyQt5.QtCore import QObject, pyqtSignal, QFile, QIODevice
-from PyQt5.QtMultimedia import QAudioInput, QAudioFormat, QAudioDeviceInfo
+from PyQt5.QtCore import QObject, pyqtSignal
+from voice_recorder import VoiceWorker
 
 class VoiceoverRecorder(QObject):
     recording_started = pyqtSignal()
     recording_finished = pyqtSignal(str)
+    level_signal = pyqtSignal(int)
     error_occurred = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, parent=None):
         super().__init__()
         self.audio_input = None
         self.file = None
         self.current_path = None
         self.is_recording = False
 
-    def start_recording(self, output_path):
+    def start_recording(self, output_path, start_time, track_idx, existing_clips):
+        """Goal 7: Prevents overwriting and initializes recording state."""
         if self.is_recording: return
+        for clip in existing_clips:
+            if clip['track'] == track_idx:
+                if abs(clip['start'] - start_time) < 0.1:
+                    self.error_occurred.emit("LANE BLOCKED: Cannot record over existing clip.")
+                    return
         self.current_path = output_path
-        self.file = QFile(output_path)
-        if not self.file.open(QIODevice.WriteOnly | QIODevice.Truncate):
-            self.error_occurred.emit("Could not open file for writing.")
-            return
-        self.file.write(b'\x00' * 44)
-        format = QAudioFormat()
-        format.setSampleRate(44100)
-        format.setChannelCount(1)
-        format.setSampleSize(16)
-        format.setCodec("audio/pcm")
-        format.setByteOrder(QAudioFormat.LittleEndian)
-        format.setSampleType(QAudioFormat.SignedInt)
-        info = QAudioDeviceInfo.defaultInputDevice()
-        if not info.isFormatSupported(format):
-            format = info.nearestFormat(format)
-        self.audio_input = QAudioInput(info, format)
-        self.audio_input.start(self.file)
+        self.worker = VoiceWorker(output_path)
+        self.worker.level_signal.connect(self.level_signal.emit)
+        self.worker.finished.connect(self._on_worker_finished)
+        self.worker.start()
         self.is_recording = True
+        self.is_paused = False
         self.recording_started.emit()
+
+    def toggle_pause(self):
+        """Standard professional pause/resume logic."""
+        if not self.is_recording: return
+        self.is_paused = not self.is_paused
+        self.worker.toggle_pause(self.is_paused)
 
     def stop_recording(self):
         if not self.is_recording: return
-        self.audio_input.stop()
-        self.file.close()
+        self.worker.stop()
         self.is_recording = False
-        self._write_wav_header(self.current_path)
-        self.recording_finished.emit(self.current_path)
+
+    def _on_worker_finished(self, path):
+        self.recording_finished.emit(path)
 
     def _write_wav_header(self, path, max_retries=5, delay_s=0.1):
-        """Fixes the WAV header so FFmpeg/VLC can read the PCM data."""
+        """Fixes the WAV header so FFmpeg can read the PCM data."""
         if not os.path.exists(path):
             return
         for i in range(max_retries):

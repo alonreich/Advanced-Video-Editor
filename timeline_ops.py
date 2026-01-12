@@ -3,6 +3,7 @@ from PyQt5.QtGui import QPen
 from PyQt5.QtCore import Qt, QPointF
 from clip_item import ClipItem
 from model import ClipModel
+import constants
 
 class TimelineOperations:
 
@@ -20,7 +21,7 @@ class TimelineOperations:
         target_track = -1
         s1 = clip_item.model.start
         e1 = clip_item.model.start + clip_item.model.duration
-        for t in range(start_t, 50):
+        for t in range(start_t, constants.MAX_TRACKS):
             is_blocked = False
             for item in self.view.scene.items():
                 if isinstance(item, ClipItem) and item.track == t:
@@ -42,7 +43,8 @@ class TimelineOperations:
             'name': f"{clip_item.name} (Audio)",
             'media_type': 'audio',
             'track': target_track,
-            'width': 0, 'height': 0,
+            'width': 0, 
+            'height': 0,
             'has_audio': True,
             'has_video': False,
             'linked_uid': clip_item.uid
@@ -50,6 +52,7 @@ class TimelineOperations:
         clip_item.model.linked_uid = audio_data['uid']
         new_audio_item = self.view.add_clip(audio_data)
         clip_item.model.has_audio = False
+        clip_item.update_cache()
         if hasattr(self.view.mw, 'asset_loader'):
             self.view.mw.asset_loader.regenerate_assets(new_audio_item.model.to_dict())
         self.view.update_tracks()
@@ -59,7 +62,7 @@ class TimelineOperations:
         self.view.scene.update()
         self.view.mw.save_state_for_undo()
 
-    def get_snapped_x(self, x_pos, track_idx=None, ignore_items=None, threshold=20):
+    def get_snapped_x(self, x_pos, track_idx=None, ignore_items=None, threshold=20, items_to_check=None):
         playhead_x = self.view.playhead_pos * self.view.scale_factor
         extra_snaps = []
         selected = self.view.get_selected_item()
@@ -70,9 +73,10 @@ class TimelineOperations:
             return playhead_x
         snaps = [0]
         if ignore_items is None: ignore_items = []
-        for item in self.view.scene.items():
+        items = items_to_check if items_to_check is not None else self.view.scene.items()
+        for item in items:
             if isinstance(item, ClipItem) and item not in ignore_items:
-                eff_th = threshold * 1.5 if (track_idx is not None and item.track == track_idx) else threshold
+                eff_th = threshold * 2 if (track_idx is not None and item.track == track_idx) else threshold
                 sx, ex = item.x(), item.x() + item.rect().width()
                 if abs(x_pos - sx) < eff_th: snaps.append(sx)
                 if abs(x_pos - ex) < eff_th: snaps.append(ex)
@@ -123,17 +127,17 @@ class TimelineOperations:
                     if s_idx < i.track <= t_idx:
                         i.track -= 1
                         i.model.track = i.track
-                        i.setY(i.track * self.view.track_height + 30)
+                        i.setY(i.track * self.view.track_height + constants.RULER_HEIGHT)
             else:
                 for i in items:
                     if t_idx <= i.track < s_idx:
                         i.track += 1
                         i.model.track = i.track
-                        i.setY(i.track * self.view.track_height + 30)
+                        i.setY(i.track * self.view.track_height + constants.RULER_HEIGHT)
             for i in src_items:
                 i.track = t_idx
                 i.model.track = t_idx
-                i.setY(t_idx * self.view.track_height + 30)
+                i.setY(t_idx * self.view.track_height + constants.RULER_HEIGHT)
         finally:
             self.view.scene.blockSignals(False)
         self.view.data_changed.emit()
@@ -146,7 +150,7 @@ class TimelineOperations:
                 target_item = item
                 break
         if target_item:
-            target_item.setPos(QPointF(pos[0] * self.view.scale_factor, pos[1] * self.view.track_height + 30))
+            target_item.setPos(QPointF(pos[0] * self.view.scale_factor, pos[1] * self.view.track_height + constants.RULER_HEIGHT))
             target_item.model.start = pos[0]
             target_item.model.track = pos[1]
             if target_item.model.linked_uid and not moving_linked:

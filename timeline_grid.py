@@ -1,9 +1,10 @@
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPixmap, QPainter, QFont
 from PyQt5.QtCore import QRectF, QPointF, Qt
+import constants
 
 class TimelineGridPainter:
 
-    def __init__(self, ruler_height=30):
+    def __init__(self, ruler_height=constants.RULER_HEIGHT):
         self.ruler_height = ruler_height
         self._cache = None
         self.ms_font = QFont("Consolas", 8)
@@ -28,7 +29,7 @@ class TimelineGridPainter:
         h = self.ruler_height
         if w <= 0: return
         self._cache = QPixmap(w, h)
-        self._cache.fill(QColor(25, 25, 25))
+        self._cache.fill(QColor(constants.COLOR_BACKGROUND).lighter(150))
         self._cached_rect = rect
         self._cached_scale = scale_factor
         p = QPainter(self._cache)
@@ -39,11 +40,12 @@ class TimelineGridPainter:
             p.drawLine(int(start_x), h, int(end_x), h)
             start_sec_raw = max(0, start_x / scale_factor)
             end_sec_raw = end_x / scale_factor
-            units = [0.1, 0.5, 1, 5, 10, 30, 60, 120, 300, 600]
-            major_step_sec = units[0]
+            units = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
+            major_step_sec = units[-1]
             for unit in units:
-                if scale_factor * unit > 100:
+                if (scale_factor * unit) >= 120:
                     major_step_sec = unit
+                    break
                     break
             minor_step_sec = major_step_sec / 5.0
             i = int(start_sec_raw / minor_step_sec)
@@ -72,13 +74,13 @@ class TimelineGridPainter:
         playhead_x = playhead_pos * scale_factor
         if playhead_x < rect.left() or playhead_x > rect.right():
             return
-        painter.setPen(QPen(QColor(255, 0, 0), 1))
+        painter.setPen(QPen(QColor(constants.COLOR_ERROR).lighter(50), 1))
         painter.drawLine(int(playhead_x), 0, int(playhead_x), int(rect.height()))
         painter.setFont(self.ms_font)
         ms_text = f"{int((playhead_pos % 1) * 1000):03}ms"
-        painter.setPen(QColor(255, 255, 255, 200))
+        painter.setPen(QColor(constants.COLOR_TEXT).lighter(100))
         painter.drawText(int(playhead_x) + 10, 25, ms_text)
-        painter.setBrush(QBrush(QColor(255, 0, 0)))
+        painter.setBrush(QBrush(QColor(constants.COLOR_ERROR).lighter(50)))
         poly = QPolygonF([
             QPointF(playhead_x - 7, 0),
             QPointF(playhead_x + 7, 0),

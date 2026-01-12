@@ -1,12 +1,14 @@
 import os
-from PyQt5.QtWidgets import QFileDialog, QListWidgetItem
-from PyQt5.QtCore import Qt, QObject, QThreadPool
+from PyQt5.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
+from PyQt5.QtCore import Qt, QObject, QThreadPool, pyqtSignal
 from PyQt5.QtGui import QPixmap
-from prober import ProbeWorker, WaveformWorker
+from prober import ProbeWorker, WaveformWorker, AudioAnalysisWorker
 from worker import ThumbnailWorker
 from clip_item import ClipItem
+import constants
 
 class AssetLoader(QObject):
+    audio_analysis_finished = pyqtSignal(dict)
 
     def __init__(self, main_window):
         super().__init__()
@@ -21,10 +23,15 @@ class AssetLoader(QObject):
         self.wave_worker = WaveformWorker(self.base_dir)
         self.wave_worker.finished.connect(self.on_wave_done)
         self.wave_worker.start()
+        self.audio_analysis_pool = QThreadPool()
+        self.audio_analysis_pool.setMaxThreadCount(2)
+        self.running_audio_workers = set()
+
         from worker import ProxyWorker
         self.proxy_worker = ProxyWorker(self.base_dir)
         self.proxy_worker.proxy_finished.connect(self.on_proxy_done)
         self.proxy_worker.start()
+
         from PyQt5.QtCore import QTimer
         self._regen_timer = QTimer()
         self._regen_timer.setSingleShot(True)
@@ -60,19 +67,30 @@ class AssetLoader(QObject):
     def handle_drop(self, path, track, time):
         is_audio = any(path.lower().endswith(x) for x in ['.mp3', '.wav', '.aac', '.flac', '.m4a'])
         if track == -1:
-            occupied_tracks = set()
+            track_occupancy = {}
             if self.mw.timeline.timeline_view.scene:
                 for item in self.mw.timeline.timeline_view.scene.items():
-                    if hasattr(item, 'track'):
-                        occupied_tracks.add(item.track)
-            if is_audio:
-                track = 1
-                while track in occupied_tracks and track < 49:
-                    track += 1
+                    t = item.track
+                    if t not in track_occupancy:
+                        track_occupancy[t] = []
+                    track_occupancy[t].append((item.model.start, item.model.start + item.model.duration))
+            track = 1 if is_audio else 0
+            while track < constants.MAX_TRACKS:
+                is_free = True
+                for start, end in track_occupancy.get(track, []):
+                    if start - 0.1 <= time <= end + 0.1:
+                        is_free = False
+                        break
+                if is_free:
+                    break
+                track += 1
             else:
+                used_tracks = set(track_occupancy.keys())
                 track = 0
-                while track in occupied_tracks and track < 49:
+                while track in used_tracks and track < constants.MAX_TRACKS:
                     track += 1
+                if track >= constants.MAX_TRACKS:
+                    track = 0
         is_internal = False
         if self.mw.pm.assets_dir and os.path.abspath(path).startswith(os.path.abspath(self.mw.pm.assets_dir)):
             is_internal = True
@@ -102,10 +120,12 @@ class AssetLoader(QObject):
             return
         track = info.get('track_id', 0)
         time = info.get('insert_time', 0.0)
-        if 'path' in info and info['path'] in self._pending_probes:
-            self._pending_probes.discard(info['path'])
+        path = info.get('path', 'N/A')
+        if path in self._pending_probes:
+            self._pending_probes.discard(path)
         if 'error' in info:
             self.mw.logger.error(f"Failed to probe file: {info.get('error')}")
+            QMessageBox.critical(self.mw, "Import Error", f"Failed to import file:\n{os.path.basename(path)}\n\nReason: {info['error']}")
             return
         self.mw.logger.info(f"on_probe_done: Adding clip to track {track}")
         v_uid = os.urandom(4).hex()
@@ -123,6 +143,8 @@ class AssetLoader(QObject):
             'media_type': 'video' if info.get('has_video') else 'audio',
             'linked_uid': a_uid
         }
+        if info.get('has_audio'):
+            self.request_audio_analysis(info['path'], v_uid)
         new_item = self.mw.timeline.add_clip(video_data)
         self.mw.timeline.timeline_view.check_for_gaps(track, max(0, time - 0.05))
         self.mw.timeline.update_tracks()
@@ -130,6 +152,17 @@ class AssetLoader(QObject):
         self.mw.save_state_for_undo()
         self.regenerate_assets(video_data)
         new_item.update_cache()
+
+    def request_audio_analysis(self, path, uid):
+        worker = AudioAnalysisWorker(path, uid)
+        worker.signals.result.connect(self.on_audio_analysis_done)
+        self.running_audio_workers.add(worker)
+        self.audio_analysis_pool.start(worker)
+
+    def on_audio_analysis_done(self, worker, result):
+        self.audio_analysis_finished.emit(result)
+        if worker in self.running_audio_workers:
+            self.running_audio_workers.remove(worker)
 
     def regenerate_assets(self, data):
         self._regen_queue[data['uid']] = data
@@ -171,6 +204,8 @@ class AssetLoader(QObject):
         self.thumb_worker.stop()
         self.wave_worker.stop()
         self.proxy_worker.stop()
+        self.audio_analysis_pool.clear()
+        self.audio_analysis_pool.waitForDone(3000)
         self.mw.logger.info("[SHUTDOWN] Waiting for ThreadPool tasks...")
         if not self.thread_pool.waitForDone(3000):
             self.mw.logger.warning("[SHUTDOWN] ThreadPool timed out. Active probes may crash.")

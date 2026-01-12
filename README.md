@@ -129,7 +129,6 @@
 │   ├── ffmpeg_generator.py         # Dynamic FilterGraph builder (Occlusion optimized)
 │   ├── playback_manager.py         # Playhead sync & Throttled real-time playback
 │   ├── player.py                   # MPV Backend for frame-accurate seek
-│   ├── player_vlc.py               # VLC Fallback backend
 │   ├── prober.py                   # FFprobe metadata & Waveform generation workers
 │   └── render_worker.py            # High-priority export threading
 ├── ui/                             # "The Cockpit" (Slick Professional Interface)
@@ -145,7 +144,7 @@
 │   ├── recorder.py                 # Core audio capture logic
 │   ├── voice_recorder.py           # Background Mic level monitoring
 │   └── worker.py                   # GPU-hijacked Proxy & Thumbnail generation
-├── binaries/                       # Local FFmpeg, VLC, & MPV runtimes
+├── binaries/                       # Local FFmpeg & MPV runtimes
 ├── cache/                          # Persistent Thumbnails & Waveforms
 ├── projects/                       # User project JSONs, Assets, & Autosaves
 └── logs/                           # Debug/Crash recovery logs

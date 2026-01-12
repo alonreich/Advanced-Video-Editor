@@ -1,6 +1,8 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QStyle
-from PyQt5.QtGui import QPainter, QColor, QPen, QRegion
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QStyle, QApplication
+from PyQt5.QtGui import QPainter, QColor, QPen, QRegion, QPainterPath
 from PyQt5.QtCore import Qt, QRect, QPointF, QRectF, pyqtSignal, QTimer
+import logging
+import constants
 
 class PopOutPlayerWindow(QWidget):
 
@@ -10,19 +12,27 @@ class PopOutPlayerWindow(QWidget):
         self.preview_widget = preview_widget
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0,0,0,0)
-        snap_back_button = QPushButton("Pop In")
-        snap_back_button.setCursor(Qt.PointingHandCursor)
-        snap_back_button.setToolTip("Pop In")
-        snap_back_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
-        snap_back_button.clicked.connect(self.preview_widget.toggle_popout)
         layout.addWidget(self.player)
-        layout.addWidget(snap_back_button)
         self.setWindowTitle("Preview")
-        self.resize(1280, 720)
 
     def closeEvent(self, event):
         self.preview_widget.toggle_popout()
         event.accept()
+
+    def moveEvent(self, event):
+        self._save_geometry()
+        super().moveEvent(event)
+
+    def resizeEvent(self, event):
+        self._save_geometry()
+        super().resizeEvent(event)
+
+    def _save_geometry(self):
+        """Remember monitor, size, and position immediately."""
+        if hasattr(self.preview_widget, 'mw') and self.preview_widget.mw:
+            rect = self.geometry()
+            geo_str = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
+            self.preview_widget.mw.config.set("popout_geometry", geo_str)
 
 class SafeOverlay(QWidget):
     param_changed = pyqtSignal(str, float)
@@ -47,6 +57,7 @@ class SafeOverlay(QWidget):
         self.is_loading = False
         self.loading_angle = 0
         self.is_recording = False
+        self.is_paused = False
         self.target_res = (1920, 1080)
         self.mode = "Landscape"
         self.dash_timer = QTimer(self)
@@ -61,33 +72,16 @@ class SafeOverlay(QWidget):
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
         self.btn_confirm.setToolTip("Apply crop adjustments")
         self.btn_confirm.clicked.connect(self.confirm_crop)
-        self.btn_confirm.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2E4D2E, stop:0.5 #1B301B, stop:1 #0F1A0F);
-                color: #A0D0A0; border: 2px solid #0A150A; border-radius: 6px; font-weight: bold; font-size: 13px;
-                border-bottom: 4px solid #050A05;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A5F3A, stop:1 #1B301B); color: white; }
-            QPushButton:pressed { border-bottom: 1px solid #050A05; margin-top: 3px; background: #0F1A0F; }
-        """)
+        self.btn_confirm.setStyleSheet(constants.STYLESHEET_BUTTON_SUCCESS)
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
         self.btn_confirm.hide()
         self.btn_cancel = QPushButton("âœ– CANCEL", self)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.setToolTip("Cancel crop adjustments")
         self.btn_cancel.clicked.connect(self.cancel_crop)
-        self.btn_cancel.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5C1A1A, stop:0.5 #3B0F0F, stop:1 #240909);
-                color: #D0A0A0; border: 2px solid #1A0505; border-radius: 6px; font-weight: bold; font-size: 13px;
-                border-bottom: 4px solid #120303;
-            }
-            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #752525, stop:1 #3B0F0F); color: white; }
-            QPushButton:pressed { border-bottom: 1px solid #120303; margin-top: 3px; background: #240909; }
-        """)
+        self.btn_cancel.setStyleSheet(constants.STYLESHEET_BUTTON_ERROR)
         self.btn_cancel.setCursor(Qt.PointingHandCursor)
         self.btn_cancel.hide()
-        import logging
         self.logger = logging.getLogger(__name__)
 
     def set_mode(self, width, height, mode_name):
@@ -172,10 +166,18 @@ class SafeOverlay(QWidget):
             p.save()
             p.setClipRect(v_rect)
             if self.is_recording:
-                p.setBrush(QColor(255, 0, 0))
-                p.setPen(Qt.NoPen)
-                if (self.dash_offset // 2) % 2 == 0:
-                    p.drawEllipse(20, 20, 15, 15)
+                if self.is_paused:
+                    p.setBrush(QColor(255, 255, 0))
+                    p.setPen(Qt.NoPen)
+                    p.drawRect(20, 20, 5, 15)
+                    p.drawRect(30, 20, 5, 15)
+                    p.setPen(QPen(Qt.white, 1))
+                    p.drawText(40, 32, "PAUSED")
+                else:
+                    p.setBrush(QColor(255, 0, 0))
+                    p.setPen(Qt.NoPen)
+                    if (self.dash_offset // 2) % 2 == 0:
+                        p.drawEllipse(20, 20, 15, 15)
                     p.setPen(QPen(Qt.white, 1))
                     p.drawText(40, 32, "REC")
             if not self.selected_clip:
@@ -208,20 +210,27 @@ class SafeOverlay(QWidget):
             p.restore()
 
     def draw_portrait_guides(self, p, v_rect):
+        """Goal 16: Dim out the 'cut-off' areas for center-cut Portrait export."""
         widget_rect = self.rect()
         p.save()
-        from PyQt5.QtGui import QPainterPath
-        path = QPainterPath()
-        path.addRect(QRectF(widget_rect))
-        path.addRect(v_rect)
-        p.setClipPath(path)
-        p.fillRect(widget_rect, QColor(0, 0, 0, 128))
+        bg_path = QPainterPath()
+        bg_path.addRect(QRectF(widget_rect))
+        bg_path.addRect(v_rect)
+        p.setClipPath(bg_path)
+        p.fillRect(widget_rect, QColor(0, 0, 0, 180))
         p.restore()
-        p.setPen(QPen(QColor(255, 255, 255, 150), 2, Qt.DashLine))
-        p.drawRect(v_rect)
-        p.setPen(QPen(QColor(255, 255, 255, 100), 2, Qt.DashLine))
-        p.setBrush(Qt.NoBrush)
-        p.drawRect(v_rect)
+        portrait_width = v_rect.height() * (9 / 16)
+        center_x = v_rect.center().x()
+        left_edge = center_x - (portrait_width / 2)
+        right_edge = center_x + (portrait_width / 2)
+        p.save()
+        p.setBrush(QColor(0, 0, 0, 140))
+        p.setPen(Qt.NoPen)
+        p.drawRect(QRectF(v_rect.left(), v_rect.top(), left_edge - v_rect.left(), v_rect.height()))
+        p.drawRect(QRectF(right_edge, v_rect.top(), v_rect.right() - right_edge, v_rect.height()))
+        p.setPen(QPen(QColor(0, 255, 255, 200), 2, Qt.DashLine))
+        p.drawRect(QRectF(left_edge, v_rect.top(), portrait_width, v_rect.height()))
+        p.restore()
 
     def draw_transform_controls(self, p, v_rect):
         sx, sy = self.selected_clip.scale_x, self.selected_clip.scale_y
@@ -347,12 +356,10 @@ class SafeOverlay(QWidget):
                     dx = curr_x - start_x
                     dy = curr_y - start_y
                     old_c = self.selected_clip
-                    new_x1 = max(0.0, min(1.0, old_c.crop_x1 + dx))
-                    new_y1 = max(0.0, min(1.0, old_c.crop_y1 + dy))
                     w = old_c.crop_x2 - old_c.crop_x1
                     h = old_c.crop_y2 - old_c.crop_y1
-                    if new_x1 + w > 1.0: new_x1 = 1.0 - w
-                    if new_y1 + h > 1.0: new_y1 = 1.0 - h
+                    new_x1 = max(0.0, min(1.0 - w, old_c.crop_x1 + dx))
+                    new_y1 = max(0.0, min(1.0 - h, old_c.crop_y1 + dy))
                     self.param_changed.emit("crop_x1", new_x1)
                     self.param_changed.emit("crop_y1", new_y1)
                     self.param_changed.emit("crop_x2", new_x1 + w)
@@ -381,10 +388,14 @@ class SafeOverlay(QWidget):
                     raw_h = (self.drag_start_rect.height() - dy_norm * v_rect.height()) if self.drag_handle in [0, 1] else (self.drag_start_rect.height() + dy_norm * v_rect.height())
                     new_h = max(min_h, min(raw_h, max_h))
                     new_w = new_h * aspect
-                    if self.drag_handle == 0: new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.bottom() - new_h, new_w, new_h)
-                    elif self.drag_handle == 1: new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.bottom() - new_h, new_w, new_h)
-                    elif self.drag_handle == 2: new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.top(), new_w, new_h)
-                    elif self.drag_handle == 3: new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.top(), new_w, new_h)
+                if self.drag_handle == 0: 
+                    new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.bottom() - new_h, new_w, new_h)
+                elif self.drag_handle == 1: 
+                    new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.bottom() - new_h, new_w, new_h)
+                elif self.drag_handle == 2: 
+                    new_rect = QRectF(self.drag_start_rect.left(), self.drag_start_rect.top(), new_w, new_h)
+                elif self.drag_handle == 3: 
+                    new_rect = QRectF(self.drag_start_rect.right() - new_w, self.drag_start_rect.top(), new_w, new_h)
                     x1, y1 = self.to_video_coords(new_rect.topLeft())
                     x2, y2 = self.to_video_coords(new_rect.bottomRight())
                     threshold = 0.02
@@ -468,22 +479,12 @@ class PreviewWidget(QWidget):
         self.btn_rw.setFixedSize(60, 30)
         self.btn_rw.setStyleSheet(btn_style_small)
         self.btn_rw.clicked.connect(lambda: self.seek_requested.emit(-5.0))
-        self.btn_play = QPushButton("PLAY / PAUSE")
+        self.btn_play = QPushButton()
         self.btn_play.setFixedSize(480, 30)
         self.btn_play.setCursor(Qt.PointingHandCursor)
         self.btn_play.setToolTip("Play/Pause")
         self.btn_play.clicked.connect(self.play_requested.emit)
-        self.btn_play.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2E7D32, stop:1 #1B5E20);
-                color: white; font-size: 14px; font-weight: bold;
-                border: 1px solid #1B5E20; border-style: outset; border-radius: 2px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #43A047, stop:1 #2E7D32);
-            }
-            QPushButton:pressed { background: #1B5E20; border-style: inset; }
-        """)
+        self.update_play_pause_button(False)
         self.btn_ff = QPushButton("5s >>")
         self.btn_ff.setCursor(Qt.PointingHandCursor)
         self.btn_ff.setToolTip("Fast-forward 5s")
@@ -495,13 +496,54 @@ class PreviewWidget(QWidget):
         ctrl_layout.addWidget(self.btn_ff)
         self.layout().addLayout(ctrl_layout)
 
+    def update_play_pause_button(self, is_playing):
+        if is_playing:
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+            self.btn_play.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {constants.COLOR_ERROR.name()}, stop:1 {constants.COLOR_ERROR.darker(150).name()});
+                    color: white; font-size: 14px; font-weight: bold;
+                    border: 1px solid {constants.COLOR_ERROR.darker(150).name()}; border-style: outset; border-radius: 2px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {constants.COLOR_ERROR.lighter(120).name()}, stop:1 {constants.COLOR_ERROR.name()});
+                }}
+                QPushButton:pressed {{ background: {constants.COLOR_ERROR.darker(150).name()}; border-style: inset; }}
+            """)
+        else:
+            self.btn_play.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+            self.btn_play.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {constants.COLOR_SUCCESS.name()}, stop:1 {constants.COLOR_SUCCESS.darker(150).name()});
+                    color: white; font-size: 14px; font-weight: bold;
+                    border: 1px solid {constants.COLOR_SUCCESS.darker(150).name()}; border-style: outset; border-radius: 2px;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {constants.COLOR_SUCCESS.lighter(120).name()}, stop:1 {constants.COLOR_SUCCESS.name()});
+                }}
+                QPushButton:pressed {{ background: {constants.COLOR_SUCCESS.darker(150).name()}; border-style: inset; }}
+            """)
+
+    def set_mode(self, w, h, name):
+        self.overlay.set_mode(w, h, name)
+
     def toggle_popout(self):
         if self.popout_window is None:
             self.popout_window = PopOutPlayerWindow(self.player, self)
             self.player.setParent(self.popout_window)
+            if hasattr(self, 'mw') and self.mw:
+                saved_geo = self.mw.config.get("popout_geometry")
+                if saved_geo:
+                    try:
+                        x, y, w, h = map(int, saved_geo.split(','))
+                        self.popout_window.setGeometry(x, y, w, h)
+                    except:
+                        self._apply_default_popout()
+                else:
+                    self._apply_default_popout()
             self.popout_window.show()
-            self.popout_button.setText("Pop In")
-            self.popout_button.setToolTip("Pop In")
+            self.popout_button.setText("Pop Back In")
+            self.popout_button.setToolTip("Pop Back In")
             self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarNormalButton))
         else:
             self.player.setParent(self.container)
@@ -512,9 +554,13 @@ class PreviewWidget(QWidget):
             self.popout_button.setToolTip("Pop Out")
             self.popout_button.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
 
-    def resizeEvent(self, event):
-        self.overlay.resize(self.size())
-        super().resizeEvent(event)
-
-    def set_mode(self, width, height, mode_name):
-        self.overlay.set_mode(width, height, mode_name)
+    def _apply_default_popout(self):
+        """Defaults to 1700x850 on the secondary monitor if available."""
+        desktop = QApplication.desktop()
+        screen_count = desktop.screenCount()
+        target_screen = 1 if screen_count > 1 else 0
+        screen_rect = desktop.screenGeometry(target_screen)
+        w, h = 1700, 850
+        x = screen_rect.left() + (screen_rect.width() - w) // 2
+        y = screen_rect.top() + (screen_rect.height() - h) // 2
+        self.popout_window.setGeometry(x, y, w, h)

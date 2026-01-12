@@ -1,14 +1,19 @@
 import subprocess
 import json
 import os
+import re
 import traceback
 import logging
 import shutil
 import hashlib
 from PyQt5.QtCore import QRunnable, QObject, pyqtSignal, QThread
+import queue
 
 class ProbeSignals(QObject):
     result = pyqtSignal(dict)
+
+class AudioAnalysisSignals(QObject):
+    result = pyqtSignal(object, dict)
 
 class ProbeWorker(QRunnable):
 
@@ -51,7 +56,9 @@ class ProbeWorker(QRunnable):
             except Exception:
                 logger.warning(f"[PROBE-CACHE] Corrupt cache file, regenerating: {cache_file}")
         try:
-            ffprobe_bin = shutil.which('ffprobe') or 'ffprobe'
+            ffprobe_bin = shutil.which('ffprobe')
+            if not ffprobe_bin:
+                raise FileNotFoundError("ffprobe binary not found in PATH.")
             cmd = [
                 ffprobe_bin,
                 '-v', 'quiet',
@@ -98,6 +105,10 @@ class ProbeWorker(QRunnable):
                     logger.warning(f"[PROBE-CACHE] Failed to write cache: {e}")
             info.update(phys_data)
             self.signals.result.emit(info)
+        except FileNotFoundError:
+            logger.critical("FATAL: ffprobe binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
+            info['error'] = "ffprobe not found. Please install ffmpeg."
+            self.signals.result.emit(info)
         except subprocess.CalledProcessError as e:
             logger.error(f"[BINARY FAILURE] Probe failed for {self.path}. Exit code: {e.returncode}")
             info['error'] = str(e)
@@ -106,7 +117,41 @@ class ProbeWorker(QRunnable):
             logger.error(f"Probe Failed:\n{traceback.format_exc()}")
             info['error'] = str(e)
             self.signals.result.emit(info)
-import queue
+
+class AudioAnalysisWorker(QRunnable):
+
+    def __init__(self, path, uid):
+        super().__init__()
+        self.path = path
+        self.uid = uid
+        self.signals = AudioAnalysisSignals()
+        self.setAutoDelete(True)
+
+    def run(self):
+        logger = logging.getLogger("Advanced_Video_Editor")
+        try:
+            ffmpeg_bin = shutil.which('ffmpeg')
+            if not ffmpeg_bin:
+                raise FileNotFoundError("ffmpeg binary not found in PATH.")
+            cmd = [
+                ffmpeg_bin, '-i', self.path, '-af', 'volumedetect', '-f', 'null', '-'
+            ]
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=si, encoding='utf-8')
+            output = result.stderr
+            mean_volume_match = re.search(r"mean_volume:\s*([-\d\.]+)\n", output)
+            if mean_volume_match:
+                mean_volume = float(mean_volume_match.group(1))
+                self.signals.result.emit(self, {'uid': self.uid, 'mean_volume': mean_volume})
+            else:
+                self.signals.result.emit(self, {'uid': self.uid, 'error': 'Could not determine mean volume.'})
+        except FileNotFoundError:
+            logger.critical("FATAL: ffmpeg binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
+            self.signals.result.emit(self, {'uid': self.uid, 'error': "ffmpeg not found. Please install ffmpeg."})
+        except Exception as e:
+            logger.error(f"Audio Analysis Failed:\n{traceback.format_exc()}")
+            self.signals.result.emit(self, {'uid': self.uid, 'error': str(e)})
 
 class WaveformWorker(QThread):
     finished = pyqtSignal(str, str)

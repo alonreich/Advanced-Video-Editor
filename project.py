@@ -21,9 +21,11 @@ class ProjectManager:
         os.makedirs(self.projects_root, exist_ok=True)
         if self.current_project_dir:
             os.makedirs(os.path.join(self.current_project_dir, "voiceover"), exist_ok=True)
+            os.makedirs(os.path.join(self.current_project_dir, "assets"), exist_ok=True)
             
     def enforce_fifo_limit(self):
         """Goal 11: Improved FIFO logic with safety protection for active projects."""
+
         import time
 
         def get_project_mtime(project_path):
@@ -45,19 +47,22 @@ class ProjectManager:
         for proj_path in valid_projs:
             if deleted_count >= to_delete_count:
                 break
-            abs_proj = os.path.abspath(proj_path)
-            abs_active = os.path.abspath(self.current_project_dir) if self.current_project_dir else ""
-            is_active = (abs_active and os.path.normcase(abs_proj) == os.path.normcase(abs_active))
-            is_recent = (time.time() - get_project_mtime(proj_path)) < 60
-            if is_active or is_recent:
-                self.logger.info(f"[FIFO] Protection active for {os.path.basename(proj_path)}. Skipping.")
+            abs_proj = os.path.normpath(os.path.abspath(proj_path))
+            active_dir = self.current_project_dir
+            abs_active = os.path.normpath(os.path.abspath(active_dir)) if active_dir else ""
+            is_active = (abs_active and abs_proj.lower() == abs_active.lower())
+            has_data = os.path.exists(os.path.join(proj_path, "project.json")) or \
+                       os.path.exists(os.path.join(proj_path, "project.autosave.json"))
+            is_recent = (time.time() - get_project_mtime(proj_path)) < 86400
+            if is_active or is_recent or not has_data:
+                self.logger.info(f"[FIFO] Skipping protected/active project: {os.path.basename(proj_path)}")
                 continue
-            self.logger.warning(f"[FIFO] Nuking old project to maintain 10-project limit: {proj_path}")
+            self.logger.warning(f"[FIFO] Nuking stale project: {os.path.basename(proj_path)}")
             try:
-                shutil.rmtree(proj_path, ignore_errors=True)
+                shutil.rmtree(proj_path)
                 deleted_count += 1
             except Exception as e:
-                self.logger.error(f"[FIFO] Failed to delete {proj_path}: {e}")
+                self.logger.error(f"[FIFO] Critical failure deleting {proj_path}: {e}")
 
     def delete_all_projects(self):
         try:
@@ -117,6 +122,7 @@ class ProjectManager:
             filename = "project.autosave.json"
         else:
             filename = "project.json"
+        os.makedirs(self.current_project_dir, exist_ok=True)
         fpath = os.path.join(self.current_project_dir, filename)
         data = {
             "id": self.project_id,

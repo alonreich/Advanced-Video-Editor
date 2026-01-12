@@ -11,13 +11,14 @@ class RenderWorker(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, clips, output_path, resolution_mode, track_vols, track_mutes):
+    def __init__(self, clips, output_path, resolution_mode, track_vols, track_mutes, audio_analysis_results):
         super().__init__()
         self.clips = clips
         self.out = output_path
         self.res = resolution_mode
         self.vols = track_vols
         self.mutes = track_mutes
+        self.audio_analysis_results = audio_analysis_results
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.process = None
 
@@ -30,13 +31,14 @@ class RenderWorker(QThread):
                 w, h = 3840, 2160
             else:
                 w, h = (1080, 1920) if "Portrait" in self.res else (1920, 1080)
-            gen = FilterGraphGenerator(self.clips, w, h, self.vols, self.mutes)
+            gen = FilterGraphGenerator(self.clips, w, h, self.vols, self.mutes, self.audio_analysis_results)
             inputs, f_str, v_map, a_map, _ = gen.build(is_export=True)
             gpu_codec = BinaryManager.get_best_encoder(self.logger)
             cmd = [BinaryManager.get_executable('ffmpeg'), '-y', '-hide_banner']
-            hw_accel = ['-hwaccel', 'cuda'] if 'nvenc' in gpu_codec else []
+            if 'nvenc' in gpu_codec:
+                cmd.extend(['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'])
             for inp in inputs:
-                cmd.extend(hw_accel + ['-i', inp])
+                cmd.extend(['-i', inp])
             cmd.extend(['-filter_complex', f_str])
             cmd.extend(['-map', v_map, '-map', a_map])
             if gpu_codec != 'libx264':
@@ -65,9 +67,22 @@ class RenderWorker(QThread):
             self.error.emit(str(e))
 
     def read_log(self):
-        """Reads FFmpeg output and parses for progress."""
-        data = self.process.readAllStandardOutput().data().decode(errors='ignore').strip()
-        self.logger.debug(f"FFmpeg: {data}")
+        """Goal 15: Hardened progress parsing with buffer-clearing."""
+        raw_data = self.process.readAllStandardOutput().data().decode(errors='ignore')
+        for line in raw_data.split('\r'):
+            if "time=" in line:
+                try:
+                    start = line.find("time=") + 5
+                    end = line.find(" ", start)
+                    time_str = line[start:end].strip()
+                    if ":" in time_str:
+                        h, m, s = time_str.split(':')
+                        current_seconds = int(h) * 3600 + int(m) * 60 + float(s)
+                        total_duration = max([c.get('start', 0) + c.get('dur', 0) for c in self.clips], default=1.0)
+                        progress_pct = int((current_seconds / total_duration) * 100)
+                        self.progress.emit(min(100, progress_pct))
+                except Exception:
+                    continue
 
     def render_fragment(self, inputs, f_str, v_map, a_map, frag_path):
         """Executes a single fragment render pass."""

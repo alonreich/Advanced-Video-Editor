@@ -112,6 +112,10 @@ class ClipManager:
                 setattr(item.model, param, value)
                 self.mw.inspector.update_clip_param(param, value)
                 self.mw.preview.overlay.update()
+            elif param == "audio_gate_threshold":
+                if hasattr(self.mw.recorder, 'worker') and self.mw.recorder.worker:
+                    self.mw.recorder.worker.set_threshold(value)
+                return
             elif param == "resync_partner":
                 partner = None
                 for it in self.mw.timeline.scene.items():
@@ -167,16 +171,18 @@ class ClipManager:
         earliest_start = min([item.model.start for item in selected_items])
         latest_end = max([item.model.start + item.model.duration for item in selected_items])
         shift_amount = latest_end - earliest_start
+        to_remove = set(selected_items)
         for item in selected_items:
             if item.model.linked_uid:
                 for partner in self.mw.timeline.scene.items():
                     if isinstance(partner, ClipItem) and partner.model.uid == item.model.linked_uid:
-                        self.mw.timeline.scene.removeItem(partner)
+                        to_remove.add(partner)
+        for item in to_remove:
             self.mw.timeline.scene.removeItem(item)
         for item in self.mw.timeline.scene.items():
-            if isinstance(item, ClipItem):
+            if isinstance(item, ClipItem) and item not in to_remove:
                 if item.model.start >= latest_end - 0.001:
-                    item.model.start -= shift_amount
+                    item.model.start = max(0, item.model.start - shift_amount)
         self.mw.timeline.update_clip_positions()
         self.mw.timeline.update_tracks()
         self.mw.inspector.set_clip([])

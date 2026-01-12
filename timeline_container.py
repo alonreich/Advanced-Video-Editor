@@ -1,8 +1,9 @@
 import logging
-from PyQt5.QtWidgets import QWidget, QHBoxLayout
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QScrollArea
+from PyQt5.QtCore import pyqtSignal, Qt
 from timeline_view import TimelineView
 from track_header import TrackHeaders
+import constants
 
 class TimelineContainer(QWidget):
     time_updated = pyqtSignal(float)
@@ -12,14 +13,12 @@ class TimelineContainer(QWidget):
 
     def __init__(self, parent=None, main_window=None):
         super().__init__(parent)
-        from PyQt5.QtWidgets import QScrollArea
-        from PyQt5.QtCore import Qt
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         self.header_scroll = QScrollArea()
-        self.header_scroll.setFixedWidth(120)
+        self.header_scroll.setFixedWidth(constants.TRACK_HEADER_WIDTH)
         self.header_scroll.setWidgetResizable(True)
         self.header_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.header_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -59,7 +58,7 @@ class TimelineContainer(QWidget):
         if highest_track < 1:
             desired_tracks = 2
         else:
-            desired_tracks = min(highest_track + 2, 50)
+            desired_tracks = min(highest_track + 2, constants.MAX_TRACKS)
         current_tracks = self.timeline_view.num_tracks
         while current_tracks < desired_tracks:
             self.add_track()
