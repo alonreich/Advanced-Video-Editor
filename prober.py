@@ -13,15 +13,15 @@ class ProbeSignals(QObject):
     result = pyqtSignal(dict)
 
 class AudioAnalysisSignals(QObject):
-    result = pyqtSignal(object, dict)
+    result = pyqtSignal(dict)
 
 class ProbeWorker(QRunnable):
-
-    def __init__(self, path, track_id=0, insert_time=0.0):
+    def __init__(self, path, track_id=0, insert_time=0.0, base_dir=None):
         super().__init__()
         self.path = path
         self.track_id = track_id
         self.insert_time = insert_time
+        self.base_dir = base_dir
         self.signals = ProbeSignals()
         self.setAutoDelete(True)
 
@@ -29,14 +29,39 @@ class ProbeWorker(QRunnable):
         """Generates a unique cache filename based on file path, size, and mtime."""
         try:
             stat = os.stat(self.path)
-            fingerprint = f"{self.path}_{stat.st_mtime}_{stat.st_size}"
+            abs_path = os.path.abspath(self.path)
+            fingerprint = f"{abs_path}_{stat.st_mtime}_{stat.st_size}"
             h = hashlib.md5(fingerprint.encode('utf-8')).hexdigest()
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            cache_dir = os.path.join(base_dir, "projects", "cache", "probes")
+
+            import sys
+            if 'window' in globals():
+                base_dir = window.base_dir
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            cache_dir = os.path.join(base_dir, "cache", "probes")
             os.makedirs(cache_dir, exist_ok=True)
+
+            import tempfile
+            temp_cache = os.path.join(tempfile.gettempdir(), "Advanced_Video_Editor", "cache", "probes")
+            os.makedirs(temp_cache, exist_ok=True)
             return os.path.join(cache_dir, f"{h}.json")
         except Exception:
-            return None
+            import tempfile
+            import hashlib
+            try:
+                temp_cache = os.path.join(tempfile.gettempdir(), "Advanced_Video_Editor", "cache", "probes")
+                os.makedirs(temp_cache, exist_ok=True)
+                temp_hash = hashlib.md5(self.path.encode('utf-8')).hexdigest()
+                return os.path.join(temp_cache, f"{temp_hash}.json")
+            except:
+                return None
+
+    def _safe_emit(self, data):
+        """Helper to emit signals without crashing during shutdown."""
+        try:
+            self.signals.result.emit(data)
+        except RuntimeError:
+            pass
 
     def run(self):
         cache_file = self._get_cache_path()
@@ -51,7 +76,7 @@ class ProbeWorker(QRunnable):
                 with open(cache_file, 'r') as f:
                     cached_data = json.load(f)
                     info.update(cached_data)
-                self.signals.result.emit(info)
+                self._safe_emit(info)
                 return
             except Exception:
                 logger.warning(f"[PROBE-CACHE] Corrupt cache file, regenerating: {cache_file}")
@@ -104,28 +129,33 @@ class ProbeWorker(QRunnable):
                 except Exception as e:
                     logger.warning(f"[PROBE-CACHE] Failed to write cache: {e}")
             info.update(phys_data)
-            self.signals.result.emit(info)
+            self._safe_emit(info)
         except FileNotFoundError:
             logger.critical("FATAL: ffprobe binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
             info['error'] = "ffprobe not found. Please install ffmpeg."
-            self.signals.result.emit(info)
+            self._safe_emit(info)
         except subprocess.CalledProcessError as e:
             logger.error(f"[BINARY FAILURE] Probe failed for {self.path}. Exit code: {e.returncode}")
             info['error'] = str(e)
-            self.signals.result.emit(info)
+            self._safe_emit(info)
         except Exception as e:
             logger.error(f"Probe Failed:\n{traceback.format_exc()}")
             info['error'] = str(e)
-            self.signals.result.emit(info)
+            self._safe_emit(info)
 
 class AudioAnalysisWorker(QRunnable):
-
     def __init__(self, path, uid):
         super().__init__()
         self.path = path
         self.uid = uid
         self.signals = AudioAnalysisSignals()
         self.setAutoDelete(True)
+
+    def _safe_emit(self, data):
+        try:
+            self.signals.result.emit(data)
+        except RuntimeError:
+            pass
 
     def run(self):
         logger = logging.getLogger("Advanced_Video_Editor")
@@ -143,15 +173,15 @@ class AudioAnalysisWorker(QRunnable):
             mean_volume_match = re.search(r"mean_volume:\s*([-\d\.]+)\n", output)
             if mean_volume_match:
                 mean_volume = float(mean_volume_match.group(1))
-                self.signals.result.emit(self, {'uid': self.uid, 'mean_volume': mean_volume})
+                self._safe_emit({'uid': self.uid, 'mean_volume': mean_volume})
             else:
-                self.signals.result.emit(self, {'uid': self.uid, 'error': 'Could not determine mean volume.'})
+                self._safe_emit({'uid': self.uid, 'error': 'Could not determine mean volume.'})
         except FileNotFoundError:
             logger.critical("FATAL: ffmpeg binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
-            self.signals.result.emit(self, {'uid': self.uid, 'error': "ffmpeg not found. Please install ffmpeg."})
+            self._safe_emit({'uid': self.uid, 'error': "ffmpeg not found. Please install ffmpeg."})
         except Exception as e:
             logger.error(f"Audio Analysis Failed:\n{traceback.format_exc()}")
-            self.signals.result.emit(self, {'uid': self.uid, 'error': str(e)})
+            self._safe_emit({'uid': self.uid, 'error': str(e)})
 
 class WaveformWorker(QThread):
     finished = pyqtSignal(str, str)

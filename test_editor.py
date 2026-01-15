@@ -13,13 +13,11 @@ from playback_manager import PlaybackManager
 app = QApplication([])
 
 class MockConfigManager:
-
     def __init__(self, path):
         self.get = MagicMock(return_value=None)
         self.set = MagicMock()
 
 class MockTimelineContainer(QWidget):
-
     def __init__(self, main_window=None):
         super().__init__()
         self.get_state = MagicMock(return_value=[])
@@ -46,7 +44,6 @@ class MockTimelineContainer(QWidget):
         self.get_content_end = MagicMock(return_value=10.0)
 
 class MockInspectorWidget(QWidget):
-
     def __init__(self, main_window=None):
         super().__init__()
         self.combo_res = MagicMock()
@@ -63,7 +60,6 @@ class MockInspectorWidget(QWidget):
         self.crop_toggled.connect = MagicMock()
 
 class MockMediaPoolWidget(QWidget):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.clear = MagicMock()
@@ -74,7 +70,6 @@ class MockMediaPoolWidget(QWidget):
         self.media_double_clicked.connect = MagicMock()
 
 class MockPreviewWidget(QWidget):
-
     def __init__(self, player_node, parent=None):
         super().__init__(parent)
         self.player_node = player_node
@@ -91,7 +86,6 @@ class MockPreviewWidget(QWidget):
         self.interaction_ended.connect = MagicMock()
     
 class MockClipModel:
-
     def __init__(self, uid, name, start, duration, track, media_type='video', **kwargs):
         self.uid = uid
         self.name = name
@@ -111,20 +105,17 @@ class MockClipModel:
             'dur': self.duration, 'track': self.track, 'media_type': self.media_type
         }
 @pytest.fixture
-
 def clean_scene():
     scene = QGraphicsScene()
     yield scene
     scene.clear()
 @pytest.fixture
-
 def clip_item_fixture(clean_scene):
     model = MockClipModel("test_uid_1", "Test Clip", 0, 10, 0)
     item = ClipItem(model)
     clean_scene.addItem(item)
     return item
 @pytest.fixture
-
 def other_clip_item_fixture(clean_scene):
     model = MockClipModel("test_uid_2", "Other Clip", 5, 10, 1)
     item = ClipItem(model)
@@ -151,7 +142,6 @@ def test_toggle_play_starts_filter_graph():
         mock_gen_class.assert_called_once()
         mock_gen_inst.build.assert_called_once()
 @patch('main_window.ConfigManager', new=MockConfigManager)
-
 def test_initial_history_state_on_load():
     with patch('main_window.ProjectManager') as MockPM, \
         patch('main_window.MPVPlayer'), \
@@ -173,7 +163,6 @@ def test_initial_history_state_on_load():
         assert 'c2' in mw.history.current_state_map
         assert len(mw.history.current_state_map) == 2
 @patch('main_window.ConfigManager', new=MockConfigManager)
-
 def test_history_state_on_reset_project():
     with patch('main_window.ProjectManager') as MockPM, \
         patch('main_window.MPVPlayer'), \
@@ -189,7 +178,6 @@ def test_history_state_on_reset_project():
         mw.proj_ctrl.reset_project()
         assert mw.history.current_state_map == {}
 @patch('main_window.ConfigManager', new=MockConfigManager)
-
 def test_history_state_on_switch_project():
     with patch('main_window.ProjectManager') as MockPM, \
         patch('main_window.MPVPlayer'), \
@@ -210,7 +198,6 @@ def test_history_state_on_switch_project():
         assert 's1' in mw.history.current_state_map
         assert len(mw.history.current_state_map) == 1
 @pytest.fixture
-
 def undo_stack():
     """Provides a clean UndoStack instance for testing."""
     return UndoStack()

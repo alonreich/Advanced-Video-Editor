@@ -53,13 +53,36 @@ class PlaybackManager(QObject):
             self.player.pause()
             self.timer.stop()
             self.state_changed.emit(False)
+            self._resume_background_tasks()
             return
         if not self.is_dirty and self.player.get_time() > 0:
             self.player.play()
             self.timer.start()
             self.state_changed.emit(True)
+            self._throttle_background_tasks()
             return
         self._rebuild_and_play(proxy_enabled, track_vols, track_mutes)
+
+    def _throttle_background_tasks(self):
+        """Goal 20: Throttle background tasks during active playback."""
+        if hasattr(self.mw, 'asset_loader'):
+            self.mw.asset_loader.thread_pool.setMaxThreadCount(1)
+            if hasattr(self.mw.asset_loader, 'proxy_worker'):
+                try:
+                    self.mw.asset_loader.proxy_worker.pause()
+                except:
+                    pass
+    
+    def _resume_background_tasks(self):
+        """Resume background tasks after playback stops."""
+        if hasattr(self.mw, 'asset_loader'):
+            import os
+            self.mw.asset_loader.thread_pool.setMaxThreadCount(os.cpu_count() or 4)
+            if hasattr(self.mw.asset_loader, 'proxy_worker'):
+                try:
+                    self.mw.asset_loader.proxy_worker.resume()
+                except:
+                    pass
 
     def _rebuild_and_play(self, proxy_enabled, track_vols, track_mutes, start_time=None, play_now=True):
         """Rebuilds the FFmpeg filter graph and sends it to the player."""
@@ -97,6 +120,7 @@ class PlaybackManager(QObject):
                 self.player.play()
                 self.timer.start()
                 self.state_changed.emit(True)
+                self._throttle_background_tasks()
             else:
                 self.player.pause()
                 self.timer.stop()
@@ -116,6 +140,8 @@ class PlaybackManager(QObject):
             return
         try:
             current_player_time = self.player.get_time()
+            if current_player_time is None:
+                return
         except Exception as e:
             self.logger.error(f"[MPV] Playback core stopped: {e}")
             self.player.stop()
@@ -123,16 +149,22 @@ class PlaybackManager(QObject):
             self.state_changed.emit(False)
             return
         abs_time = current_player_time + self.start_offset
-        if self.loop_enabled and abs_time >= self.loop_out:
+        if self.loop_enabled and abs_time >= self.loop_out - 0.016:
             self.logger.debug(f"[LOOP] Boundary hit at {abs_time:.2f}s. Snapping back to {self.loop_in:.2f}s.")
-            self.seek_and_sync(self.loop_in)
+            self.player.pause()
+            seek_time = self.loop_in + 0.001
+            self.seek_and_sync(seek_time)
+
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(50, lambda: self.player.play() if not self.player.is_playing() else None)
             return
         self.playhead_updated.emit(abs_time)
         max_end = self.timeline.get_content_end()
-        if max_end > 0 and abs_time >= max_end - 0.01:
+        if max_end > 0 and abs_time >= max_end - 0.016:
             self.player.pause()
             self.timer.stop()
             self.state_changed.emit(False)
+            self._resume_background_tasks()
 
     def seek_and_sync(self, time_sec):
         """Standardizes fast seeking by bypassing the blocking sync checks."""
@@ -147,8 +179,8 @@ class PlaybackManager(QObject):
         if target_time < self.start_offset or target_time > (self.start_offset + 5.0):
             self._rebuild_and_play(
                 False, 
-                self.inspector.mw.track_volumes, 
-                self.inspector.mw.track_mutes, 
+                self.mw.track_volumes, 
+                self.mw.track_mutes, 
                 start_time=target_time,
                 play_now=should_keep_playing
             )
@@ -158,7 +190,7 @@ class PlaybackManager(QObject):
                 self.player.play()
                 self.timer.start()
         self.playhead_updated.emit(target_time)
-        overlay = getattr(self.inspector.mw.preview, 'overlay', None)
+        overlay = getattr(self.mw.preview, 'overlay', None)
         if overlay:
             overlay.is_loading = False
             overlay.update()

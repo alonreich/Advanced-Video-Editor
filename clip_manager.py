@@ -2,7 +2,6 @@ import uuid
 from clip_item import ClipItem
 
 class ClipManager:
-
     def __init__(self, main_window):
         self.mw = main_window
         self.undo_lock = False

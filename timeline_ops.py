@@ -6,7 +6,6 @@ from model import ClipModel
 import constants
 
 class TimelineOperations:
-
     def __init__(self, view):
         self.view = view 
 

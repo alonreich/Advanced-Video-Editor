@@ -3,7 +3,6 @@ import copy
 import threading
 
 class UndoStack:
-
     def __init__(self):
         self.undo_stack = []
         self.redo_stack = []
@@ -36,41 +35,54 @@ class UndoStack:
                 self.logger.debug(f"[HISTORY] Smart Push: +{len(command['added'])} -{len(command['removed'])} ~{len(command['modified'])}")
             except Exception as e:
                 self.logger.error(f"Failed to push undo state: {e}", exc_info=True)
+                raise
+            finally:
+                if len(self.undo_stack) > self.max_depth * 2:
+                    self.logger.warning(f"[HISTORY] Stack size abnormal: {len(self.undo_stack)}. Truncating.")
+                    self.undo_stack = self.undo_stack[-self.max_depth:]
 
     def undo(self, _current_ignored=None):
         """Applies the reverse of the last command."""
         with self.lock:
-            if not self.undo_stack:
+            try:
+                if not self.undo_stack:
+                    return None
+                cmd = self.undo_stack.pop()
+                self.redo_stack.append(cmd)
+                for uid in cmd['added']:
+                    if uid in self.current_state_map:
+                        del self.current_state_map[uid]
+                for uid, data in cmd['removed'].items():
+                    self.current_state_map[uid] = data
+                for uid, changes in cmd['modified'].items():
+                    if uid in self.current_state_map:
+                        for param, val_bundle in changes.items():
+                            self.current_state_map[uid][param] = val_bundle['old']
+                return self._get_flat_state()
+            except Exception as e:
+                self.logger.error(f"Failed to undo: {e}", exc_info=True)
                 return None
-            cmd = self.undo_stack.pop()
-            self.redo_stack.append(cmd)
-            for uid in cmd['added']:
-                if uid in self.current_state_map:
-                    del self.current_state_map[uid]
-            for uid, data in cmd['removed'].items():
-                self.current_state_map[uid] = data
-            for uid, changes in cmd['modified'].items():
-                if uid in self.current_state_map:
-                    for param, val_bundle in changes.items():
-                        self.current_state_map[uid][param] = val_bundle['old']
-            return self._get_flat_state()
 
     def redo(self):
         with self.lock:
-            if not self.redo_stack:
+            try:
+                if not self.redo_stack:
+                    return None
+                cmd = self.redo_stack.pop()
+                self.undo_stack.append(cmd)
+                for uid, data in cmd['added'].items():
+                    self.current_state_map[uid] = data
+                for uid in cmd['removed']:
+                    if uid in self.current_state_map:
+                        del self.current_state_map[uid]
+                for uid, changes in cmd['modified'].items():
+                    if uid in self.current_state_map:
+                        for param, val_bundle in changes.items():
+                            self.current_state_map[uid][param] = val_bundle['new']
+                return self._get_flat_state()
+            except Exception as e:
+                self.logger.error(f"Failed to redo: {e}", exc_info=True)
                 return None
-            cmd = self.redo_stack.pop()
-            self.undo_stack.append(cmd)
-            for uid, data in cmd['added'].items():
-                self.current_state_map[uid] = data
-            for uid in cmd['removed']:
-                if uid in self.current_state_map:
-                    del self.current_state_map[uid]
-            for uid, changes in cmd['modified'].items():
-                if uid in self.current_state_map:
-                    for param, val_bundle in changes.items():
-                        self.current_state_map[uid][param] = val_bundle['new']
-            return self._get_flat_state()
 
     def _compute_diff(self, old_map, new_map):
         """Calculates granular changes between two timeline states."""

@@ -69,6 +69,5 @@ class FilterGraph:
         logger.debug(f"[FILTER_GRAPH] Full serialized graph: {full_graph_str}")
         return full_graph_str
     @property
-
     def inputs(self):
         return self._inputs

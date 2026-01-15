@@ -1,0 +1,36 @@
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox, QDoubleSpinBox
+
+class CropDialog(QDialog):
+    def __init__(self, x1, y1, x2, y2, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Change Crop")
+        layout = QVBoxLayout(self)
+        formLayout = QFormLayout()
+        self.x1SpinBox = QDoubleSpinBox()
+        self.x1SpinBox.setRange(0.0, 1.0)
+        self.x1SpinBox.setSingleStep(0.01)
+        self.x1SpinBox.setValue(x1)
+        self.y1SpinBox = QDoubleSpinBox()
+        self.y1SpinBox.setRange(0.0, 1.0)
+        self.y1SpinBox.setSingleStep(0.01)
+        self.y1SpinBox.setValue(y1)
+        self.x2SpinBox = QDoubleSpinBox()
+        self.x2SpinBox.setRange(0.0, 1.0)
+        self.x2SpinBox.setSingleStep(0.01)
+        self.x2SpinBox.setValue(x2)
+        self.y2SpinBox = QDoubleSpinBox()
+        self.y2SpinBox.setRange(0.0, 1.0)
+        self.y2SpinBox.setSingleStep(0.01)
+        self.y2SpinBox.setValue(y2)
+        formLayout.addRow("X1:", self.x1SpinBox)
+        formLayout.addRow("Y1:", self.y1SpinBox)
+        formLayout.addRow("X2:", self.x2SpinBox)
+        formLayout.addRow("Y2:", self.y2SpinBox)
+        layout.addLayout(formLayout)
+        buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+        layout.addWidget(buttonBox)
+
+    def getCrop(self):
+        return self.x1SpinBox.value(), self.y1SpinBox.value(), self.x2SpinBox.value(), self.y2SpinBox.value()

@@ -8,7 +8,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence
 
 class ShortcutsDialog(QDialog):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mw = parent

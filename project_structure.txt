@@ -85,13 +85,11 @@
     A SafeOverlay provides direct on-preview handles for real-time manipulation 
     of clip scale, position, and crop parameters with center-snapping guides.
 
-17. AUTOMATIC DLL PATCHING
-    The BinaryManager automatically clones libmpv-2.dll to mpv-1.dll on boot 
-    to resolve Windows-specific backend compatibility issues.
+17. NATIVE LIBMPV-2 SUPPORT
+    The system natively loads libmpv-2.dll without requiring legacy filename patching, 
+    compatible with updated MPV API structures.
 
 18. VERTICAL VIEW SYNCHRONIZATION
-    The TimelineContainer enforces strict vertical alignment between track 
-    headers and the viewport, maintaining integrity across all 50 possible lanes.
 
 19. EMERGENCY SIDECAR LOGGING
     Critical failures trigger an immediate state dump to project.sidecar.json, 
@@ -104,6 +102,9 @@
 # ==============================================================================
 # PROJECT ARCHITECTURE & FILE ROLE STRUCTURE
 # ==============================================================================
+# General guideline: trying to keep each file no longer than 150-200 lines of code maximum.
+# if there is a need to write more than 150-200 lines of code, it is fine, but should be devided into,
+# seperate multiple modules/classes/files in such way that each file is not longer than 150-200 lines of code all by itself.
 
 .
 ├── advanced_video_editor.py        # Entry point: System bootstrap & Global recovery hooks

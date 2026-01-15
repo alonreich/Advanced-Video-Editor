@@ -6,7 +6,6 @@ from PyQt5.QtCore import Qt
 from binary_manager import BinaryManager
 
 class MPVPlayer(QWidget):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_DontCreateNativeAncestors)
@@ -28,6 +27,8 @@ class MPVPlayer(QWidget):
             pause=True,
             log_handler=self._on_mpv_log,
             loglevel="error",
+            hwdec='auto',
+            vo='gpu',
         )
         _orig_command = self.mpv.command
 
@@ -143,26 +144,31 @@ class MPVPlayer(QWidget):
             self.logger.error("[MPV] Filter graph is empty. Aborting playback.")
             self.stop()
             return
-        main_input = clean_inputs[0]
-        external_files = clean_inputs[1:] if len(clean_inputs) > 1 else []
+
+        source_defs = []
+        created_pads = set()
+
+        def input_replacer(match):
+            idx = int(match.group(1))
+            stream_type = match.group(2)
+            if idx >= len(clean_inputs): 
+                return f"[{idx}:{stream_type}]"
+            path = clean_inputs[idx].replace('\\', '/').replace("'", "'\\''").replace(":", "\\:")
+            pad_name = f"src_{idx}_{stream_type}"
+            if pad_name not in created_pads:
+                filter_name = "movie" if stream_type == 'v' else "amovie"
+                source_defs.append(f"{filter_name}='{path}':loop=0[{pad_name}]")
+                created_pads.add(pad_name)
+            return f"[{pad_name}]"
+
         try:
             self.mpv.pause = True
             self._playing = False
-            try:
-                self.mpv.command("set", "lavfi-complex", "")
-            except Exception:
-                pass
-            if external_files:
-                self.mpv.command("set", "external-files", ",".join(external_files))
-            else:
-                try:
-                    self.mpv.command("set", "external-files", "")
-                except Exception:
-                    pass
-            self.logger.info(f"Setting lavfi-complex: {graph}")
-            self.mpv.command("set", "lavfi-complex", graph)
-            self.logger.info(f"Loading main input: {main_input}")
-            self.mpv.command("loadfile", main_input, "replace")
+            final_graph = re.sub(r"\[(\d+):([va])\]", input_replacer, graph)
+            full_command = f"{';'.join(source_defs)};{final_graph}"
+            self.logger.info(f"[MPV] Loading self-contained graph via lavfi://")
+    
+            self.mpv.command("loadfile", f"lavfi://[{full_command}]", "replace")
             self.mpv.pause = False
             self._playing = True
             self.logger.info("Playback of filter graph initiated.")

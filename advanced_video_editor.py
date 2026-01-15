@@ -1,5 +1,7 @@
 import sys
 import os
+os.environ['PYTHONDONTWRITEBYTECODE'] = '1'
+
 import logging
 import traceback
 import ctypes
@@ -8,19 +10,27 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from system import setup_system, StreamToLogger
 from binary_manager import BinaryManager
+from main_window import MainWindow
 
 def exception_hook(exctype, value, tb):
     """Goal 19: Global Exception Hook for Emergency Sidecar Recovery."""
     err_msg = "".join(traceback.format_exception(exctype, value, tb))
     logger = logging.getLogger("Advanced_Video_Editor")
     logger.critical(f"CORE CRASH DETECTED:\n{err_msg}")
-    if 'window' in globals() and window:
-        try:
-            logger.info("[RECOVERY] Initializing Emergency Sidecar Dump...")
-            window.save_crash_backup()
-            logger.info("[RECOVERY] Emergency backup successful. Check project.sidecar.json.")
-        except Exception as e:
-            logger.critical(f"[RECOVERY] Sidecar dump FAILED: {e}")
+    if not hasattr(exception_hook, '_recursion_depth'):
+        exception_hook._recursion_depth = 0
+    exception_hook._recursion_depth += 1
+    try:
+        if exception_hook._recursion_depth < 3 and 'window' in globals() and window:
+            try:
+                logger.info("[RECOVERY] Initializing Emergency Sidecar Dump...")
+                window.save_crash_backup()
+                logger.info("[RECOVERY] Emergency backup successful. Check project.sidecar.json.")
+            except Exception as e:
+                logger.critical(f"[RECOVERY] Sidecar dump FAILED: {e}")
+                exception_hook._recursion_depth = 3
+    finally:
+        exception_hook._recursion_depth = max(0, exception_hook._recursion_depth - 1)
     sys.__excepthook__(exctype, value, tb)
 
 def enable_drag_drop_for_elevated_app(hwnd):
@@ -32,14 +42,28 @@ def enable_drag_drop_for_elevated_app(hwnd):
     ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
     ChangeWindowMessageFilterEx.argtypes = [HWND, UINT, DWORD, ctypes.POINTER(ctypes.c_void_p)]
     ChangeWindowMessageFilterEx.restype = ctypes.c_bool
+    successes = {}
+    failures = {}
     success_dropfiles = ChangeWindowMessageFilterEx(HWND(hwnd), WM_DROPFILES, MSGFLT_ADD, None)
+    successes['WM_DROPFILES'] = success_dropfiles
     success_copydata = ChangeWindowMessageFilterEx(HWND(hwnd), WM_COPYDATA, MSGFLT_ADD, None)
+    successes['WM_COPYDATA'] = success_copydata
     success_globaldata = ChangeWindowMessageFilterEx(HWND(hwnd), WM_COPYGLOBALDATA, MSGFLT_ADD, None)
-    if success_dropfiles and success_copydata:
-        logging.getLogger("Advanced_Video_Editor").info(f"Successfully enabled drag and drop messages for HWND: {hwnd}")
+    successes['WM_COPYGLOBALDATA'] = success_globaldata
+    logger = logging.getLogger("Advanced_Video_Editor")
+    for msg, success in successes.items():
+        if success:
+            logger.debug(f"[UIPI] Successfully enabled {msg} for HWND: {hwnd}")
+        else:
+            logger.warning(f"[UIPI] Failed to enable {msg} for HWND: {hwnd}")
+    if all(successes.values()):
+        logger.info(f"[UIPI] Fully enabled drag and drop for HWND: {hwnd}")
+        return True
+    elif successes['WM_DROPFILES'] and successes['WM_COPYDATA']:
+        logger.info(f"[UIPI] Partially enabled drag and drop (missing WM_COPYGLOBALDATA) for HWND: {hwnd}")
         return True
     else:
-        logging.getLogger("Advanced_Video_Editor").warning(f"Failed to enable some drag and drop messages for HWND: {hwnd}")
+        logger.error(f"[UIPI] Critical drag-drop messages failed for HWND: {hwnd}")
         return False
 if __name__ == "__main__":
     sys.excepthook = exception_hook
@@ -51,8 +75,6 @@ if __name__ == "__main__":
     sys.stderr = StreamToLogger(logger, logging.ERROR)
     logger.info("=== Booting Advanced Video Editor ===")
     logger.info("Importing MainWindow...")
-
-    from main_window import MainWindow
     logger.info("Creating QApplication...")
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

@@ -1,3 +1,4 @@
+import threading
 import os
 from PyQt5.QtWidgets import QFileDialog, QListWidgetItem, QMessageBox
 from PyQt5.QtCore import Qt, QObject, QThreadPool, pyqtSignal
@@ -39,6 +40,7 @@ class AssetLoader(QObject):
         self._regen_timer.timeout.connect(self._process_regen_queue)
         self._regen_queue = {}
         self._pending_probes = set()
+        self._pending_probes_lock = threading.Lock()
 
     def import_dialog(self, music_only=False):
         last = self.mw.config.get("last_import", self.base_dir)
@@ -98,9 +100,11 @@ class AssetLoader(QObject):
             local_path = path
         else:
             local_path = self.mw.pm.import_asset(path)
-        if local_path in self._pending_probes:
-            self.mw.logger.warning(f"[LOADER] Blocking duplicate import for: {local_path}")
-            return
+        with self._pending_probes_lock:
+            if local_path in self._pending_probes:
+                self.mw.logger.warning(f"[LOADER] Blocking duplicate import for: {local_path}")
+                return
+            self._pending_probes.add(local_path)
         in_pool = False
         for i in range(self.mw.media_pool.count()):
             if self.mw.media_pool.item(i).data(Qt.UserRole) == local_path:
@@ -110,8 +114,7 @@ class AssetLoader(QObject):
             item = QListWidgetItem(os.path.basename(local_path))
             item.setData(Qt.UserRole, local_path)
             self.mw.media_pool.addItem(item)
-        self._pending_probes.add(local_path)
-        worker = ProbeWorker(local_path, track_id=track, insert_time=time)
+        worker = ProbeWorker(local_path, track_id=track, insert_time=time, base_dir=self.base_dir)
         worker.signals.result.connect(self.on_probe_done)
         self.thread_pool.start(worker)
 
@@ -121,8 +124,9 @@ class AssetLoader(QObject):
         track = info.get('track_id', 0)
         time = info.get('insert_time', 0.0)
         path = info.get('path', 'N/A')
-        if path in self._pending_probes:
-            self._pending_probes.discard(path)
+        with self._pending_probes_lock:
+            if path in self._pending_probes:
+                self._pending_probes.discard(path)
         if 'error' in info:
             self.mw.logger.error(f"Failed to probe file: {info.get('error')}")
             QMessageBox.critical(self.mw, "Import Error", f"Failed to import file:\n{os.path.basename(path)}\n\nReason: {info['error']}")
@@ -155,7 +159,7 @@ class AssetLoader(QObject):
 
     def request_audio_analysis(self, path, uid):
         worker = AudioAnalysisWorker(path, uid)
-        worker.signals.result.connect(self.on_audio_analysis_done)
+        worker.signals.result.connect(lambda res, w=worker: self.on_audio_analysis_done(w, res))
         self.running_audio_workers.add(worker)
         self.audio_analysis_pool.start(worker)
 
@@ -201,18 +205,34 @@ class AssetLoader(QObject):
         """Goal 19: Safe shutdown sequence to prevent race conditions."""
         self._shutting_down = True
         self.mw.logger.info("[SHUTDOWN] Initiating safe teardown...")
-        self.thumb_worker.stop()
-        self.wave_worker.stop()
-        self.proxy_worker.stop()
-        self.audio_analysis_pool.clear()
-        self.audio_analysis_pool.waitForDone(3000)
+        workers = [self.thumb_worker, self.wave_worker, self.proxy_worker]
+        for w in workers:
+            if w:
+                w.stop()
+        if hasattr(self, 'audio_analysis_pool'):
+            self.audio_analysis_pool.waitForDone(1000)
+            self.audio_analysis_pool.clear()
+            for worker in list(self.running_audio_workers):
+                try:
+                    if hasattr(worker, 'stop'):
+                        worker.stop()
+                except:
+                    pass
+            self.running_audio_workers.clear()
         self.mw.logger.info("[SHUTDOWN] Waiting for ThreadPool tasks...")
         if not self.thread_pool.waitForDone(3000):
             self.mw.logger.warning("[SHUTDOWN] ThreadPool timed out. Active probes may crash.")
-        workers = [self.thumb_worker, self.wave_worker, self.proxy_worker]
+            self.thread_pool.clear()
         for w in workers:
-            if not w.wait(2000):
-                self.mw.logger.warning(f"[SHUTDOWN] Worker {type(w).__name__} failed to exit gracefully.")
+            if w:
+                if not w.wait(2000):
+                    self.mw.logger.warning(f"[SHUTDOWN] Worker {type(w).__name__} failed to exit gracefully.")
+                    try:
+                        w.terminate()
+                    except:
+                        pass
+        self._regen_queue.clear()
+        self._pending_probes.clear()
 
     def request_proxy(self, uid, path):
         self.mw.logger.info(f"[ASSET] Requesting proxy for {uid}")

@@ -34,7 +34,6 @@ import constants
 from render_worker import RenderWorker
 
 class MainWindow(QMainWindow):
-
     def __init__(self, base_dir, file_to_load=None):
         super().__init__()
         BinaryManager.ensure_env()
@@ -319,7 +318,7 @@ class MainWindow(QMainWindow):
             return
         crop_key = self.config.get("shortcut_crop", "C")
         if event.text().upper() == crop_key:
-            self.toggle_crop_mode(not self.preview.overlay.crop_mode)
+            self.preview.overlay.toggle_crop_mode(external_call=True)
             return
         if event.key() == Qt.Key_V:
             if not self.recorder.is_recording:

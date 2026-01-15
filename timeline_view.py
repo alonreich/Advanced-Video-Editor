@@ -61,6 +61,28 @@ class TimelineView(QGraphicsView):
         self.ghost_item = None
         self.setMouseTracking(True)
 
+    def change_clip_color(self, item):
+        from PyQt5.QtWidgets import QColorDialog
+        color = QColorDialog.getColor()
+        if color.isValid():
+            item.model.color = color.name()
+            item.update_cache()
+            self.data_changed.emit()
+
+    def toggle_mute(self, item):
+        item.model.muted = not item.model.muted
+        item.update_cache()
+        self.data_changed.emit()
+
+    def rename_clip(self, item):
+        from PyQt5.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, 'Rename Clip', 'Enter new name:')
+        if ok and text:
+            item.model.name = text
+            item.name = text
+            item.update_cache()
+            self.data_changed.emit()
+
     def get_snapped_x(self, x, **kwargs):
         return self.ops.get_snapped_x(x, **kwargs)
 
@@ -319,7 +341,7 @@ class TimelineView(QGraphicsView):
             item = self.active_resize_item
             current_x_scene = self.mapToScene(event.pos()).x()
             delta_x = current_x_scene - self.drag_start_pos.x()
-            start_x, start_w, start_fade = self.drag_start_geometry
+            start_x, start_w, start_fade = self.drag_start_geometry or (0,0,0)
             if self.resize_drag_mode == 'fade_in':
                 delta_sec = (self.mapToScene(event.pos()).x() - item.pos().x()) / self.scale_factor
                 snapped_fade = round(delta_sec / frame_dur) * frame_dur
@@ -380,9 +402,10 @@ class TimelineView(QGraphicsView):
             self.update_clip_positions()
             self.data_changed.emit()
             return
+        selection = []
         if self.is_dragging_clip:
             selection = list(self.drag_start_item_positions.keys())
-            if not selection: return
+        if self.is_dragging_clip and selection:
             if self.mw: self.mw.playback.player.pause()
             main_item = selection[0]
             main_item_start_pos = self.drag_start_item_positions[main_item]
@@ -393,7 +416,7 @@ class TimelineView(QGraphicsView):
             if self.snapping_enabled:
                 visible_items = self.items(self.viewport().rect())
                 snapped_x = self.ops.get_snapped_x(raw_x, track_idx=new_track, ignore_items=selection, 
-                                                threshold=20, items_to_check=visible_items)
+                                                    threshold=20, items_to_check=visible_items)
                 raw_delta_x = snapped_x - main_item_start_pos.x()
             can_move = True
             for item in selection:
@@ -423,21 +446,22 @@ class TimelineView(QGraphicsView):
                     item.model.start = snapped_start
                     item.update_cache()
                     item.update()
+            if not self.ghost_item:
+                from PyQt5.QtWidgets import QGraphicsRectItem
+                self.ghost_item = QGraphicsRectItem()
+                self.ghost_item.setBrush(QColor(255, 255, 255, 80))
+                self.ghost_item.setPen(QPen(Qt.cyan, 1, Qt.DashLine))
+                self.ghost_item.setZValue(99)
+                self.scene.addItem(self.ghost_item)
+            main_item = selection[0]
+            self.ghost_item.setRect(0, 0, main_item.rect().width(), main_item.rect().height())
+            self.ghost_item.setPos(main_item.pos())
+            self.ghost_item.show()
+            if not self.scrub_throttle_timer.isActive():
+                self.scrub_throttle_timer.start()
             return
         if self.is_dragging_playhead:
             self._pending_scrub_x = self.mapToScene(event.pos()).x()
-            if self.is_dragging_clip and selection:
-                if not self.ghost_item:
-                    from PyQt5.QtWidgets import QGraphicsRectItem
-                    self.ghost_item = QGraphicsRectItem()
-                    self.ghost_item.setBrush(QColor(255, 255, 255, 80))
-                    self.ghost_item.setPen(QPen(Qt.cyan, 1, Qt.DashLine))
-                    self.ghost_item.setZValue(99)
-                    self.scene.addItem(self.ghost_item)
-                main_item = selection[0]
-                self.ghost_item.setRect(0, 0, main_item.rect().width(), main_item.rect().height())
-                self.ghost_item.setPos(main_item.pos())
-                self.ghost_item.show()
             if not self.scrub_throttle_timer.isActive():
                 self.scrub_throttle_timer.start()
         elif self.mode == Mode.RAZOR:
@@ -486,9 +510,7 @@ class TimelineView(QGraphicsView):
             self.scene.clearSelection()
             item.setSelected(True)
             menu = QMenu(self)
-            if item.model.media_type == 'video':
-                menu.addAction("Split Audio & Video").triggered.connect(lambda: self.ops.split_audio_video(item))
-                menu.addAction("Crop").triggered.connect(lambda: self.mw.toggle_crop_mode(True))
+            menu.addAction("Crop").triggered.connect(lambda: self.mw.toggle_crop_mode(True))
             menu.addSeparator()
             menu.addAction("Delete").triggered.connect(self.remove_selected_clips)
             menu.exec_(event.globalPos())

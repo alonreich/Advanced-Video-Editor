@@ -4,11 +4,14 @@ import constants
 
 class ClipPainter:
     @staticmethod
-
-    def draw_base_rect(painter, rect, is_audio, is_out_of_sync=False, is_colliding=False):
+    def draw_base_rect(painter, rect, is_audio, is_out_of_sync=False, is_colliding=False, color=None):
         """Draws the background fill only."""
         grad = QLinearGradient(0, 0, 0, rect.height())
-        if is_colliding:
+        if color:
+            base_color = QColor(color)
+            grad.setColorAt(0, base_color.lighter(120))
+            grad.setColorAt(1, base_color.darker(120))
+        elif is_colliding:
             grad.setColorAt(0, QColor(constants.COLOR_ERROR).lighter(50))
             grad.setColorAt(1, QColor(constants.COLOR_ERROR).darker(150))
         elif is_out_of_sync:
@@ -24,7 +27,6 @@ class ClipPainter:
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
     @staticmethod
-
     def draw_selection_border(painter, rect, is_selected, is_out_of_sync):
         """Draws the border on top of everything else."""
         border_color = QColor(10, 10, 10)
@@ -39,7 +41,6 @@ class ClipPainter:
         painter.setPen(QPen(border_color, border_width))
         painter.drawRoundedRect(0, 0, int(rect.width()), int(rect.height()), 4, 4)
     @staticmethod
-
     def draw_waveform(painter, rect, pixmap, model, scale):
         if not pixmap or model.media_type != 'audio': return
         src_dur = getattr(model, 'source_duration', model.duration)
@@ -56,7 +57,6 @@ class ClipPainter:
         finally:
             painter.restore()
     @staticmethod
-
     def draw_thumbnails(painter, rect, start_pm, end_pm, model):
         if model.media_type != 'video' or not start_pm: return
         thumb_h = rect.height()
@@ -78,7 +78,6 @@ class ClipPainter:
         finally:
             painter.restore()
     @staticmethod
-
     def draw_fades(painter, rect, model, scale):
         fi_w = model.fade_in * scale
         fo_w = model.fade_out * scale
@@ -94,7 +93,6 @@ class ClipPainter:
             g.setColorAt(1, QColor(0,0,0,200))
             painter.fillRect(QRectF(x_s, 0, fo_w, rect.height()), g)
     @staticmethod
-
     def draw_trim_handles(painter, rect):
         """Goal 8: Split-zone handles. Top=Trim/Freeze, Bottom=Fade."""
         w = 10
@@ -107,7 +105,6 @@ class ClipPainter:
         painter.drawRect(0, half_h, w, half_h)
         painter.drawRect(int(rect.width() - w), half_h, w, half_h)
     @staticmethod
-
     def draw_proxy_indicator(painter, rect):
         """Draws a Cyan 'P' badge in the top-right corner."""
         size = 16

@@ -2,7 +2,6 @@ from PyQt5.QtWidgets import QWidget, QLabel, QHBoxLayout
 from PyQt5.QtCore import Qt
 
 class CustomTitleBar(QWidget):
-
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.layout = QHBoxLayout(self)

@@ -34,7 +34,6 @@ def setup_system(base_dir):
     return logger
 
 class ConfigManager:
-
     def __init__(self, path):
         self.path = path
         self.data = {}

@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field, fields, asdict
 import uuid
 @dataclass
-
 class ClipModel:
     path: str
     track: int
@@ -33,7 +32,6 @@ class ClipModel:
     end_freeze: float = 0.0
     is_main_audio_source: bool = False
     @classmethod
-
     def from_dict(cls, data):
         if 'dur' in data and 'duration' not in data:
             data = data.copy()
@@ -47,6 +45,6 @@ class ClipModel:
         return cls(**filtered_args)
 
     def to_dict(self):
-        data = asdict(self)
-        data['dur'] = self.duration
-        return data
+                data = asdict(self)
+                data['dur'] = self.duration
+                return data

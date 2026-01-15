@@ -2,7 +2,6 @@ import logging
 from filter_graph import FilterGraph, FilterNode
 
 class FilterGraphGenerator:
-
     def __init__(self, clips, width=1920, height=1080, volumes=None, mutes=None, audio_analysis=None):
         self.clips = clips
         self.w = width
@@ -36,7 +35,7 @@ class FilterGraphGenerator:
             final_audio_node.output_pins[0] = "[ao]"
             graph.add_node(final_audio_node)
         else:
-            null_audio = FilterNode("anullsrc", {'channel_layout': 'stereo', 'sample_rate': 44100}, num_inputs=0)
+            null_audio = FilterNode("anullsrc", {'layout': 'stereo', 'sample_rate': 44100}, num_inputs=0)
             null_audio.output_pins[0] = "[ao]"
             graph.add_node(null_audio)
         main_input_used = any(c['path'].replace('\\','/') == graph.inputs[0] for c in video_clips) if graph.inputs else False

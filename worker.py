@@ -41,8 +41,8 @@ class ThumbnailWorker(QThread):
             self.logger.info(f"[THUMB-GPU] 40-Series NVIDIA GPU detected. Using scale_cuda.")
         elif gpu_codec == 'h264_qsv':
             self.hwaccel_args = ['-hwaccel', 'qsv']
-            self.scale_filter = 'vpp_qsv'
-            self.logger.info(f"[THUMB-GPU] Intel QSV detected. Using vpp_qsv.")
+            self.scale_filter = 'scale_qsv'
+            self.logger.info(f"[THUMB-GPU] Intel QSV detected. Using scale_qsv.")
         else:
             self.hwaccel_args, self.scale_filter = [], 'scale'
             self.logger.info(f"[THUMB-CPU] No compatible GPU found for thumbnails. Falling back to CPU.")
@@ -89,8 +89,8 @@ class ThumbnailWorker(QThread):
             vf_chain = f"{s_filter}=-2:120,hwdownload,format=nv12"
             cmd += hw_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
         elif hw_args and 'qsv' in hw_args:
-            vf_chain = f"vpp_qsv=w=-2:h=120"
-            device_args = ['-init_hw_device', 'qsv=qsv', '-filter_hw_device', 'qsv']
+            vf_chain = f"scale_qsv=w=-1:h=120,hwdownload,format=nv12"
+            device_args = ['-init_hw_device', 'qsv=qsv:hw', '-filter_hw_device', 'qsv']
             cmd += hw_args + device_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
         else:
             cmd += ['-ss', str(seek_time), '-i', in_path, '-vf', "scale=-2:120"]

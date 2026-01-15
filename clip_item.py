@@ -8,7 +8,6 @@ from clip_painter import ClipPainter
 import constants
 
 class ClipItem(QGraphicsRectItem):
-
     def __init__(self, model: ClipModel, scale=constants.DEFAULT_TIMELINE_SCALE_FACTOR):
         super().__init__(0, 0, model.duration * scale, constants.TRACK_HEIGHT)
         self.logger = logging.getLogger("Advanced_Video_Editor")
@@ -92,7 +91,8 @@ class ClipItem(QGraphicsRectItem):
                     if abs(item.model.start - self.model.start) > 0.001:
                         is_out_of_sync = True
                         break
-        ClipPainter.draw_base_rect(painter, rect, is_audio, is_out_of_sync, self.is_colliding)
+        clip_color = getattr(self.model, 'color', '#5D5D5D')
+        ClipPainter.draw_base_rect(painter, rect, is_audio, is_out_of_sync, self.is_colliding, clip_color)
         ClipPainter.draw_thumbnails(painter, rect, self.thumbnail_start, self.thumbnail_end, self.model)
         if not is_audio:
             ClipPainter.draw_trim_handles(painter, rect)

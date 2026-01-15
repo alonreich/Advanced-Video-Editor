@@ -3,7 +3,6 @@ from PyQt5.QtGui import QBrush, QColor, QPen
 import constants
 
 class TimelineScene(QGraphicsScene):
-
     def __init__(self, num_tracks=6, track_height=constants.TRACK_HEIGHT):
         super().__init__()
         self.num_tracks = num_tracks
@@ -22,8 +21,8 @@ class TimelineScene(QGraphicsScene):
             painter.setPen(QPen(QColor(45, 45, 45), 1))
             painter.drawLine(left, y, right, y)
         painter.setPen(QPen(QColor(60, 60, 60), 1))
-        start_sec = int(left / constants.DEFAULT_TIMELINE_SCALE_FACTOR)
-        end_sec = int(right / constants.DEFAULT_TIMELINE_SCALE_FACTOR)
+        start_sec = int(rect.left() / constants.DEFAULT_TIMELINE_SCALE_FACTOR)
+        end_sec = int(rect.right() / constants.DEFAULT_TIMELINE_SCALE_FACTOR)
         scale = getattr(self.parent(), 'scale_factor', constants.DEFAULT_TIMELINE_SCALE_FACTOR)
         for sec in range(start_sec, end_sec + 1):
             x = sec * scale

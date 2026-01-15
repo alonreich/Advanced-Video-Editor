@@ -4,7 +4,6 @@ from render_worker import RenderWorker
 import constants
 
 class ExportDialog(QDialog):
-
     def __init__(self, timeline_state, track_vols, track_mutes, res_mode, audio_analysis_results, parent=None):
         super().__init__(parent)
         self.state = timeline_state

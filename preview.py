@@ -5,7 +5,6 @@ import logging
 import constants
 
 class PopOutPlayerWindow(QWidget):
-
     def __init__(self, player_widget, preview_widget):
         super().__init__()
         self.player = player_widget
@@ -97,8 +96,10 @@ class SafeOverlay(QWidget):
         self.selected_clip = clip_model
         self.update()
 
-    def toggle_crop_mode(self):
-        self.crop_mode = not self.crop_mode
+    def toggle_crop_mode(self, external_call=False):
+        """Toggle crop mode with optional parameter to indicate external call."""
+        if external_call:
+            self.crop_mode = not self.crop_mode
         if self.crop_mode and self.selected_clip:
             if hasattr(self.parent(), 'apply_crop'):
                 self.parent().apply_crop(None) 
@@ -117,6 +118,13 @@ class SafeOverlay(QWidget):
                 self.parent().apply_crop(self.selected_clip)
             self.btn_confirm.hide()
             self.btn_cancel.hide()
+        try:
+            if hasattr(self, 'mw') and self.mw and hasattr(self.mw.inspector, 'btn_crop_toggle'):
+                self.mw.inspector.btn_crop_toggle.blockSignals(True)
+                self.mw.inspector.btn_crop_toggle.setChecked(self.crop_mode)
+                self.mw.inspector.btn_crop_toggle.blockSignals(False)
+        except Exception as e:
+            self.logger.error(f"Failed to sync crop button: {e}")
         self.update()
         if self.parent():
             self.parent().update()

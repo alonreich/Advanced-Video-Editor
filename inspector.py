@@ -1,12 +1,12 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QDoubleSpinBox, QGroupBox, 
     QSlider, QHBoxLayout, QGridLayout, QComboBox, QToolButton, QSpinBox, QCheckBox, 
     QProgressBar, QPushButton, QSizePolicy, QScrollArea)
+
 from PyQt5.QtGui import QPainter, QPen
 from PyQt5.QtCore import pyqtSignal, Qt
 import constants
 
 class GatedProgressBar(QProgressBar):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.threshold_pct = 0.0

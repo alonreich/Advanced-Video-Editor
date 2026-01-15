@@ -6,7 +6,6 @@ import datetime
 import logging
 
 class ProjectManager:
-
     def __init__(self, base_dir):
         self.logger = logging.getLogger("Advanced_Video_Editor")
         self.projects_root = os.path.join(base_dir, "projects")
@@ -151,7 +150,6 @@ class ProjectManager:
         return self.load_project_from_dir(self.get_latest_project_dir())
 
     def get_latest_project_dir(self):
-
         def get_real_mtime(path):
             candidates = [os.path.getmtime(path)]
             p_json = os.path.join(path, "project.json")

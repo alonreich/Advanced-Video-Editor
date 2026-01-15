@@ -8,7 +8,6 @@ from PyQt5.QtWidgets import QMessageBox, QInputDialog, QApplication, QAction
 from PyQt5.QtCore import QTimer, Qt, QByteArray
 
 class ProjectController:
-
     def __init__(self, main_window):
         self.mw = main_window
         self.pm = main_window.pm

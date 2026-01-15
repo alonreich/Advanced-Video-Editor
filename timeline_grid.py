@@ -3,7 +3,6 @@ from PyQt5.QtCore import QRectF, QPointF, Qt
 import constants
 
 class TimelineGridPainter:
-
     def __init__(self, ruler_height=constants.RULER_HEIGHT):
         self.ruler_height = ruler_height
         self._cache = None
