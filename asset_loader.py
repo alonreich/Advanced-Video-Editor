@@ -10,6 +10,11 @@ import constants
 
 class AssetLoader(QObject):
     audio_analysis_finished = pyqtSignal(dict)
+    progress_started = pyqtSignal(str)
+    progress_updated = pyqtSignal(int, int)
+    progress_finished = pyqtSignal()
+    waveform_ready = pyqtSignal(str, str)
+    thumbnail_ready = pyqtSignal(str, str, str)
 
     def __init__(self, main_window):
         super().__init__()
@@ -50,6 +55,7 @@ class AssetLoader(QObject):
             paths, _ = QFileDialog.getOpenFileNames(self.mw, "Import", last)
         if paths:
             self.mw.config.set("last_import", os.path.dirname(paths[0]))
+            self.progress_started.emit(f"Importing {len(paths)} files...")
             next_track = 0
             if self.mw.timeline.timeline_view.scene:
                 for item in self.mw.timeline.timeline_view.scene.items():
@@ -57,16 +63,20 @@ class AssetLoader(QObject):
                         next_track = max(next_track, item.track + 1)
             next_track = max(1, next_track)
             for i, p in enumerate(paths):
+                self.progress_updated.emit(i + 1, len(paths))
                 local_path = self.mw.pm.import_asset(p)
                 item = QListWidgetItem(os.path.basename(local_path))
                 item.setData(Qt.UserRole, local_path)
                 self.mw.media_pool.addItem(item)
                 if music_only:
                     self.handle_drop(local_path, next_track + i, 0)
-        if False:
-                    self.handle_drop(local_path, next_track + i, 0)
+            self.progress_finished.emit()
 
     def handle_drop(self, path, track, time):
+        if hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+            self.mw.playback.player.pause()
+            self.mw.playback.timer.stop()
+            self.mw.playback.state_changed.emit(False)
         is_audio = any(path.lower().endswith(x) for x in ['.mp3', '.wav', '.aac', '.flac', '.m4a'])
         if track == -1:
             track_occupancy = {}
@@ -181,25 +191,10 @@ class AssetLoader(QObject):
                 self.thumb_worker.add_task(data['path'], data['uid'], data['dur'])
 
     def on_wave_done(self, uid, path):
-        for i in self.mw.timeline.scene.items():
-            if isinstance(i, ClipItem) and i.uid == uid:
-                i.waveform_pixmap = QPixmap(path)
-                i.update_cache()
-                i.update()
+        self.waveform_ready.emit(uid, path)
                 
     def on_thumb_done(self, uid, start_p, end_p):
-        for i in self.mw.timeline.scene.items():
-            if isinstance(i, ClipItem) and i.uid == uid:
-                if start_p and os.path.exists(start_p):
-                    i.thumbnail_start = QPixmap(start_p)
-                if end_p and os.path.exists(end_p):
-                    i.thumbnail_end = QPixmap(end_p)
-                i._last_render_time = 0 
-                i.update_cache()
-                i.update()
-                i.thumbnail_end = QPixmap(end_p)
-                i.update_cache()
-                i.update()
+        self.thumbnail_ready.emit(uid, start_p, end_p)
 
     def cleanup(self):
         """Goal 19: Safe shutdown sequence to prevent race conditions."""
@@ -211,18 +206,9 @@ class AssetLoader(QObject):
                 w.stop()
         if hasattr(self, 'audio_analysis_pool'):
             self.audio_analysis_pool.waitForDone(1000)
-            self.audio_analysis_pool.clear()
-            for worker in list(self.running_audio_workers):
-                try:
-                    if hasattr(worker, 'stop'):
-                        worker.stop()
-                except:
-                    pass
-            self.running_audio_workers.clear()
         self.mw.logger.info("[SHUTDOWN] Waiting for ThreadPool tasks...")
         if not self.thread_pool.waitForDone(3000):
             self.mw.logger.warning("[SHUTDOWN] ThreadPool timed out. Active probes may crash.")
-            self.thread_pool.clear()
         for w in workers:
             if w:
                 if not w.wait(2000):
@@ -232,7 +218,8 @@ class AssetLoader(QObject):
                     except:
                         pass
         self._regen_queue.clear()
-        self._pending_probes.clear()
+        with self._pending_probes_lock:
+            self._pending_probes.clear()
 
     def request_proxy(self, uid, path):
         self.mw.logger.info(f"[ASSET] Requesting proxy for {uid}")

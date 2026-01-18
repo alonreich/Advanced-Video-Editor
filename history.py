@@ -14,22 +14,20 @@ class UndoStack:
     def push(self, new_state_list, force=False):
         """Goal 12: Smart Push with Delta Compression."""
         with self.lock:
+            current_map_copy = self.current_state_map.copy()
+
+        import copy
+        new_state_map = {c['uid']: copy.deepcopy(c) for c in new_state_list}
+        if not force and current_map_copy == new_state_map:
+            return
+        command = self._compute_diff(current_map_copy, new_state_map)
+        if not any(command.values()):
+            return
+        with self.lock:
             try:
-                new_state_map = {c['uid']: c for c in new_state_list}
-                if not force and self.current_state_map == new_state_map:
-                    return
-                command = self._compute_diff(self.current_state_map, new_state_map)
-                if not any(command.values()):
-                    return
                 self.undo_stack.append(command)
                 self.redo_stack.clear()
-                updated_state_map = {}
-                for uid, data in new_state_map.items():
-                    if uid in command['added'] or uid in command['modified']:
-                        updated_state_map[uid] = data.copy()
-                    else:
-                        updated_state_map[uid] = self.current_state_map.get(uid, data)
-                self.current_state_map = updated_state_map
+                self.current_state_map = new_state_map
                 if len(self.undo_stack) > self.max_depth:
                     self.undo_stack.pop(0)
                 self.logger.debug(f"[HISTORY] Smart Push: +{len(command['added'])} -{len(command['removed'])} ~{len(command['modified'])}")
@@ -105,4 +103,5 @@ class UndoStack:
         return cmd
 
     def _get_flat_state(self):
-        return list(self.current_state_map.values())
+        import copy
+        return [copy.deepcopy(v) for v in self.current_state_map.values()]

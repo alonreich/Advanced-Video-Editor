@@ -87,9 +87,8 @@
     A SafeOverlay provides direct on-preview handles for real-time manipulation 
    of clip scale, position, and crop parameters with center-snapping guides.
 
-17. AUTOMATIC DLL PATCHING
-    The BinaryManager automatically clones libmpv-2.dll to mpv-1.dll on boot 
-   to resolve Windows-specific backend compatibility issues.
+17. NATIVE LIBMPV-2 SUPPORT
+    The BinaryManager uses libmpv-2.dll directly, compatible with updated MPV API structures.
 
 18. VERTICAL VIEW SYNCHRONIZATION
     The TimelineContainer enforces strict vertical alignment between track 

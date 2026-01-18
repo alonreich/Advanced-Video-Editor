@@ -1,18 +1,15 @@
 import os
 import sys
-binaries_path = os.path.join(os.path.dirname(__file__), "binaries")
-if binaries_path not in os.environ["PATH"]:
-    os.environ["PATH"] = binaries_path + os.pathsep + os.environ["PATH"]
-
 import logging
 import json
 import subprocess
 from PyQt5.QtWidgets import (QMainWindow, QDockWidget, QAction, QToolButton, QMenu, 
                             QWidget, QSizePolicy, QPushButton, QLabel, QMessageBox, 
-                            QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem, QStyle, QApplication, QDialog)
+                            QActionGroup, QDesktopWidget, QSplitter, QListWidgetItem, QStyle, QApplication, QDialog,
+                            QProgressBar, QComboBox)
 
-from PyQt5.QtGui import QIcon, QColor, QKeySequence
-from PyQt5.QtCore import Qt, QByteArray
+from PyQt5.QtGui import QIcon, QColor, QKeySequence, QPixmap
+from PyQt5.QtCore import Qt, QByteArray, QSize
 from project_controller import ProjectController
 from clip_manager import ClipManager
 from asset_loader import AssetLoader
@@ -34,9 +31,9 @@ import constants
 from render_worker import RenderWorker
 
 class MainWindow(QMainWindow):
-    def __init__(self, base_dir, file_to_load=None):
+    def __init__(self, base_dir, binary_manager, file_to_load=None):
         super().__init__()
-        BinaryManager.ensure_env()
+        self.binary_manager = binary_manager
         self.base_dir = base_dir
         self.is_dirty = False
         self.logger = logging.getLogger("Advanced_Video_Editor")
@@ -51,7 +48,7 @@ class MainWindow(QMainWindow):
         self.track_volumes = {}
         self.track_mutes = {}
         self.audio_analysis_results = {}
-        self.player_node = MPVPlayer()
+        self.player_node = MPVPlayer(binary_manager=self.binary_manager)
         self.recorder = VoiceoverRecorder()
         self.recorder.recording_started.connect(self.on_recording_started)
         self.recorder.recording_finished.connect(self.on_recording_finished)
@@ -105,8 +102,51 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.dock_pool, self.dock_insp], [constants.DEFAULT_DOCK_WIDTH_POOL, constants.DEFAULT_DOCK_WIDTH_INSPECTOR], Qt.Horizontal)
         self.resizeDocks([self.dock_timeline], [constants.DEFAULT_DOCK_HEIGHT_TIMELINE], Qt.Vertical)
         self.setup_toolbar()
+        self.progress_bar = QProgressBar()
+        self.statusBar().addPermanentWidget(self.progress_bar)
+        self.progress_bar.hide()
         if g := self.config.get("geometry"): self.restoreGeometry(QByteArray.fromHex(g.encode()))
         if s := self.config.get("state"): self.restoreState(QByteArray.fromHex(s.encode()))
+
+    def show_progress_bar(self, message):
+        self.statusBar().showMessage(message)
+        self.progress_bar.show()
+        self.progress_bar.setRange(0, 0)
+
+    def update_progress_bar(self, value, total):
+        self.progress_bar.setRange(0, total)
+        self.progress_bar.setValue(value)
+
+    def hide_progress_bar(self):
+        self.statusBar().clearMessage()
+        self.progress_bar.hide()
+
+    def set_cursor_for_interactive_widgets(self):
+        """Set hand cursor for all interactive widgets."""
+        from PyQt5.QtWidgets import (QAbstractButton, QComboBox, QSlider, QSpinBox, 
+                                     QDoubleSpinBox, QRadioButton, QTabBar, QMenu, 
+                                     QAbstractSpinBox, QScrollBar, QHeaderView, QCheckBox,
+                                     QWidget)
+        from PyQt5.QtCore import Qt
+        
+        def apply_cursor(widget):
+            if isinstance(widget, (QAbstractButton, QComboBox, QSlider, QSpinBox, 
+                                   QDoubleSpinBox, QRadioButton, QCheckBox, QAbstractSpinBox)):
+                widget.setCursor(Qt.PointingHandCursor)
+            elif isinstance(widget, QTabBar):
+                for i in range(widget.count()):
+                    widget.setTabButton(i, widget.tabButton(i))
+                widget.setCursor(Qt.PointingHandCursor)
+            elif isinstance(widget, QScrollBar):
+                widget.setCursor(Qt.PointingHandCursor)
+            elif isinstance(widget, QHeaderView):
+                widget.setCursor(Qt.PointingHandCursor)
+            # Recursively process children
+            for child in widget.children():
+                if isinstance(child, QWidget):
+                    apply_cursor(child)
+        
+        apply_cursor(self)
 
     def finalize_setup(self):
         self.preview.set_player(self.player_node)
@@ -129,11 +169,45 @@ class MainWindow(QMainWindow):
         self.inspector.crop_toggled.connect(self.toggle_crop_mode)
         self.media_pool.media_double_clicked.connect(self.on_media_pool_double_click)
         self.asset_loader.audio_analysis_finished.connect(self.on_audio_analysis_finished)
+        self.asset_loader.progress_started.connect(self.show_progress_bar)
+        self.asset_loader.progress_updated.connect(self.update_progress_bar)
+        self.asset_loader.progress_finished.connect(self.hide_progress_bar)
+        self.asset_loader.waveform_ready.connect(self.on_waveform_ready)
+        self.asset_loader.thumbnail_ready.connect(self.on_thumbnail_ready)
         self.recorder.level_signal.connect(self.inspector.mic_meter.setValue)
         self.proj_ctrl.setup_project_menu()
+        # Hide inspector's export resolution combo box (moved to toolbar)
+        self.inspector.combo_res.setVisible(False)
+        # Sync toolbar combo with inspector combo
+        self.toolbar_res_combo.currentTextChanged.connect(self.inspector.combo_res.setCurrentText)
+        self.inspector.combo_res.currentTextChanged.connect(self.toolbar_res_combo.setCurrentText)
+        # Set hand cursor for all interactive widgets
+        self.set_cursor_for_interactive_widgets()
+
+    def on_waveform_ready(self, uid, path):
+        for i in self.timeline.scene.items():
+            if isinstance(i, ClipItem) and i.uid == uid:
+                i.waveform_pixmap = QPixmap(path)
+                i.update_cache()
+                i.update()
+
+    def on_thumbnail_ready(self, uid, start_p, end_p):
+        for i in self.timeline.scene.items():
+            if isinstance(i, ClipItem) and i.uid == uid:
+                if start_p and os.path.exists(start_p):
+                    i.thumbnail_start = QPixmap(start_p)
+                if end_p and os.path.exists(end_p):
+                    i.thumbnail_end = QPixmap(end_p)
+                i._last_render_time = 0
+                i.update_cache()
+                i.update()
 
     def on_media_pool_double_click(self, path):
         self.logger.info(f"on_media_pool_double_click called with path: {path}")
+        if hasattr(self, 'playback') and self.playback.player.is_playing():
+            self.playback.player.pause()
+            self.playback.timer.stop()
+            self.playback.state_changed.emit(False)
         self.asset_loader.handle_drop(path, -1, 0.0)
         try:
             self.timeline.set_time(0.0)
@@ -156,32 +230,90 @@ class MainWindow(QMainWindow):
     def setup_toolbar(self):
         tb = self.addToolBar("Main")
         tb.setObjectName("MainToolbar")
-        tb.setStyleSheet(f"QToolButton, QPushButton {{ font-size: 13px; padding: 5px; color: {constants.COLOR_TEXT.name()}; }}")
+        tb.setFixedHeight(35)
+        tb.setIconSize(QSize(16, 16))
+        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        tb.setStyleSheet(f"""
+            QToolBar {{
+                padding: 0px;
+                margin: 0px;
+                spacing: 4px;
+            }}
+            QToolButton, QPushButton {{
+                font-size: 12px;
+                padding: 4px 8px;
+                color: {constants.COLOR_TEXT.name()};
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3a3a3a,
+                    stop:1 #2a2a2a);
+                border: 1px solid #555;
+                border-radius: 3px;
+                border-top-color: #666;
+                border-left-color: #666;
+                border-bottom-color: #222;
+                border-right-color: #222;
+                min-width: 80px;
+                height: 35px;
+                max-height: 35px;
+            }}
+            QToolButton:hover, QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4a4a4a,
+                    stop:1 #3a3a3a);
+                border-color: #777;
+            }}
+            QToolButton:pressed, QPushButton:pressed {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2a2a2a,
+                    stop:1 #3a3a3a);
+                border-color: #222;
+                border-top-color: #222;
+                border-left-color: #222;
+                border-bottom-color: #666;
+                border-right-color: #666;
+            }}
+            QToolButton:checked {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a4a7a,
+                    stop:1 #0a3a6a);
+                border-color: #2a7acc;
+            }}
+        """)
         btn_import = QPushButton("\U0001F4C2  Import Media  \U0001F4C2")
         btn_import.setCursor(Qt.PointingHandCursor)
         btn_import.setToolTip("Import media files into the project")
         btn_import.clicked.connect(self.import_media)
-        btn_import.setFixedWidth(180)
+        btn_import.setFixedWidth(150)
+        btn_import.setFixedHeight(35)
         btn_import.setStyleSheet(f"""
             QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #2C3E50, stop:0.2 #34495E, 
-                    stop:0.5 #1A252F, stop:1 #0F1419);
-                color: #D5DBDB; 
+                    stop:0 #1E3A8A, stop:0.2 #1E40AF, 
+                    stop:0.5 #1D4ED8, stop:1 #0F172A);
+                color: #E0F2FE; 
                 font-weight: bold; 
-                border: 1px solid #1B2631;
+                font-size: 11px;
+                border: 1px solid #1E3A8A;
                 border-radius: 3px; 
-                padding: 5px; 
+                padding: 4px; 
                 margin-right: 25px;
+                border-bottom: 2px solid #3B82F6;
             }}
             QPushButton:hover {{
-                background: #1C2833;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2563EB, stop:0.5 #1D4ED8, stop:1 #1E40AF);
                 color: white;
+                border: 1px solid #3B82F6;
+            }}
+            QPushButton:pressed {{
+                background: #0F172A;
+                border: 1px inset #1E3A8A;
             }}
         """)
         self.btn_recovery = QPushButton("⚠️ RECOVER CRASHED PROJECT")
         self.btn_recovery.setFixedWidth(250)
-        self.btn_recovery.setStyleSheet(f"background-color: {constants.COLOR_ERROR.name()}; color: white; font-weight: bold; border: 2px solid yellow;")
+        self.btn_recovery.setFixedHeight(35)
+        self.btn_recovery.setStyleSheet(f"background-color: {constants.COLOR_ERROR.name()}; color: white; font-weight: bold; border: 2px solid yellow; font-size: 11px;")
         self.btn_recovery.clicked.connect(self.trigger_sidecar_recovery)
         self.btn_recovery.hide()
         tb.addWidget(self.btn_recovery)
@@ -193,9 +325,23 @@ class MainWindow(QMainWindow):
         btn_export.setCursor(Qt.PointingHandCursor)
         btn_export.setToolTip("Export the timeline as a video file")
         btn_export.clicked.connect(self.open_export)
-        btn_export.setFixedWidth(180)
-        btn_export.setStyleSheet(f"background-color: {constants.COLOR_SUCCESS.name()}; color: white; font-weight: bold; border-radius: 3px; padding: 5px; margin-right: 25px;")
+        btn_export.setFixedWidth(150)
+        btn_export.setFixedHeight(35)
+        btn_export.setStyleSheet(f"background-color: {constants.COLOR_SUCCESS.name()}; color: white; font-weight: bold; border-radius: 3px; padding: 4px; margin-right: 10px; font-size: 11px;")
         tb.addWidget(btn_export)
+        # Export Resolution Combo Box
+        self.toolbar_res_combo = QComboBox()
+        self.toolbar_res_combo.addItems([
+            "Landscape 1920x1080 (HD)", "Landscape 2560x1440 (QHD)", "Landscape 3840x2160 (4K)",
+            "Portrait 1080x1920 (Mobile HD)", "Portrait 1440x2560 (Mobile QHD)"
+        ])
+        self.toolbar_res_combo.setCurrentIndex(0)
+        self.toolbar_res_combo.setToolTip("Output Resolution")
+        self.toolbar_res_combo.setFixedWidth(200)
+        self.toolbar_res_combo.setFixedHeight(35)
+        self.toolbar_res_combo.setCursor(Qt.PointingHandCursor)
+        self.toolbar_res_combo.currentTextChanged.connect(self.on_resolution_switched)
+        tb.addWidget(self.toolbar_res_combo)
         shortcuts_action = QAction("⌨ Shortcuts", self)
         shortcuts_action.setToolTip("View keyboard command reference")
         shortcuts_action.triggered.connect(self.show_shortcuts)
@@ -205,12 +351,6 @@ class MainWindow(QMainWindow):
         undo_action.setToolTip("Undo the last action")
         undo_action.triggered.connect(self.undo_action)
         tb.addAction(undo_action)
-        save_action = QAction("Save Project", self)
-        save_action.setShortcut("Ctrl+S")
-        save_action.setToolTip("Force a manual project save")
-        save_action.triggered.connect(self.proj_ctrl.run_autosave)
-        self.addAction(save_action) 
-        tb.addAction(save_action)
         delete_action = QAction("Delete", self)
         delete_action.setToolTip("Delete the selected clip")
         delete_action.triggered.connect(lambda: self.clip_ctrl.delete_current())
@@ -241,8 +381,17 @@ class MainWindow(QMainWindow):
         self.btn_projects.setAutoRaise(True)
         self.projects_menu = QMenu(self.btn_projects)
         self.projects_menu.aboutToShow.connect(lambda: self.proj_ctrl.populate_project_list(self.projects_menu))
+        # Add Save Project action to the menu
+        self.save_action = QAction("Save Project", self)
+        self.save_action.setShortcut("Ctrl+S")
+        self.save_action.setToolTip("Force a manual project save")
+        self.save_action.triggered.connect(self.proj_ctrl.run_autosave)
+        self.addAction(self.save_action)  # for shortcut
+        self.projects_menu.addAction(self.save_action)
+        self.projects_menu.addSeparator()
         self.btn_projects.setMenu(self.projects_menu)
-        self.btn_projects.setStyleSheet(f"QToolButton {{ font-size: 13px; font-weight: normal; color: {constants.COLOR_TEXT.name()}; padding: 5px; }}")
+        self.btn_projects.setFixedHeight(35)
+        self.btn_projects.setStyleSheet(f"QToolButton {{ font-size: 12px; font-weight: normal; color: {constants.COLOR_TEXT.name()}; padding: 4px 8px; min-width: 80px; }}")
         tb.addWidget(self.btn_projects)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -278,6 +427,7 @@ class MainWindow(QMainWindow):
         btn_reset_layout.setToolTip("Reset the UI layout to the default")
         btn_reset_layout.clicked.connect(self.reset_layout)
         btn_reset_layout.setFixedWidth(180)
+        btn_reset_layout.setFixedHeight(35)
         btn_reset_layout.setStyleSheet(red_metallic_style)
         tb.addWidget(btn_reset_layout)
         btn_reset_proj = QPushButton("Reset Project")
@@ -286,12 +436,14 @@ class MainWindow(QMainWindow):
         btn_reset_proj.clicked.connect(self.proj_ctrl.reset_project)
         btn_reset_proj.setStyleSheet(red_metallic_style)
         btn_reset_proj.setFixedWidth(180)
+        btn_reset_proj.setFixedHeight(35)
         tb.addWidget(btn_reset_proj)
-        btn_nuke = QPushButton("DELETE ALL PROJECTS")
+        btn_nuke = QPushButton("Delete All Projects")
         btn_nuke.setCursor(Qt.PointingHandCursor)
         btn_nuke.setToolTip("Delete all projects and associated files")
         btn_nuke.clicked.connect(self.proj_ctrl.delete_all_projects)
         btn_nuke.setFixedWidth(180)
+        btn_nuke.setFixedHeight(35)  # Match height of reset project button
         btn_nuke.setStyleSheet(red_metallic_style + "QPushButton { margin-right: 0px; }")
         tb.addWidget(btn_nuke)
 
@@ -390,7 +542,7 @@ class MainWindow(QMainWindow):
     def open_export(self):
         """Goal 21: High-fidelity render handoff."""
         dlg = ExportDialog(self.timeline.get_state(), self.track_volumes, self.track_mutes, 
-                            self.inspector.combo_res.currentText(), self.audio_analysis_results, self)
+                            self.toolbar_res_combo.currentText(), self.audio_analysis_results, self)
         if dlg.exec_() == QDialog.Accepted:
             self.render_worker = RenderWorker(
                 self.timeline.get_state(), dlg.output_path, dlg.resolution_mode,
@@ -410,6 +562,14 @@ class MainWindow(QMainWindow):
 
     def mark_dirty(self):
         self.is_dirty = True
+        if hasattr(self, 'playback'):
+            self.playback.mark_dirty(serious=True)
+            if self.playback.player.is_playing():
+                self.playback.player.pause()
+                self.playback.timer.stop()
+                self.playback.state_changed.emit(False)
+                current_time = self.timeline.playhead_pos
+                self.playback.seek_and_sync(current_time)
 
     def save_state_for_undo(self):
         self.history.push(self.timeline.get_state())
@@ -420,7 +580,7 @@ class MainWindow(QMainWindow):
         self.logger.critical("Attempting emergency crash backup...")
         ui = {
             "playhead": self.timeline.playhead_pos,
-            "resolution": self.inspector.combo_res.currentText()
+            "resolution": self.toolbar_res_combo.currentText()
         }
         self.pm.save_state(self.timeline.get_state(), ui_state=ui, is_emergency=True)
 
@@ -450,7 +610,7 @@ class MainWindow(QMainWindow):
             "zoom": self.timeline.scale_factor,
             "scroll_x": self.timeline.horizontalScrollBar().value(),
             "scroll_y": self.timeline.verticalScrollBar().value(),
-            "resolution": self.inspector.combo_res.currentText()
+            "resolution": self.toolbar_res_combo.currentText()
         }
         self.proj_ctrl.pm.save_state(self.timeline.get_state(), ui, assets=pool_assets)
         self.config.set("geometry", self.saveGeometry().toHex().data().decode())

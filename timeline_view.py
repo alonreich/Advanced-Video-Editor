@@ -55,6 +55,7 @@ class TimelineView(QGraphicsView):
         self.setDragMode(QGraphicsView.RubberBandDrag)
         self.setRenderHint(QPainter.Antialiasing)
         self.setAcceptDrops(True)
+        self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.scene.selectionChanged.connect(self.on_selection_change)
         self.painter_helper = TimelineGridPainter(self.ruler_height)
         self.ops = TimelineOperations(self)
@@ -122,7 +123,7 @@ class TimelineView(QGraphicsView):
                         and i.track == track_idx], key=lambda x: x.model.start)
         found_gap = False
         gap_start, gap_end = 0.0, 0.0
-        FRAME_JITTER_THRESHOLD = 0.016 
+        FRAME_JITTER_THRESHOLD = 0.033
         for i in range(len(clips)):
             if clips[i].model.start > deleted_start + 0.001:
                 prev_end = clips[i-1].model.start + clips[i-1].model.duration if i > 0 else 0.0
@@ -224,6 +225,10 @@ class TimelineView(QGraphicsView):
             item = self.get_selected_item()
             if not item:
                 return
+            if self.mw and hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+                self.mw.playback.player.pause()
+                self.mw.playback.timer.stop()
+                self.mw.playback.state_changed.emit(False)
             self.mw.save_state_for_undo()
             curr_start = item.model.start
             curr_end = curr_start + item.model.duration
@@ -272,12 +277,15 @@ class TimelineView(QGraphicsView):
             super().wheelEvent(event)
 
     def mousePressEvent(self, event):
-        if self.mw: self.mw.playback.player.pause()
         if event.button() != Qt.LeftButton:
             super().mousePressEvent(event)
             return
         item = self.itemAt(event.pos())
+        px_scene = self.playhead_pos * self.scale_factor
+        px_vp = self.mapFromScene(QPointF(px_scene, 0)).x()
+        is_clicking_playhead_or_ruler = abs(event.pos().x() - px_vp) < 10 or event.pos().y() < self.ruler_height
         if isinstance(item, ClipItem):
+            if self.mw: self.mw.playback.player.pause()
             if not item.isSelected():
                 self.is_dragging_clip = True
                 self.drag_start_pos = event.pos()
@@ -316,21 +324,25 @@ class TimelineView(QGraphicsView):
                 self.drag_start_item_positions = {i: i.pos() for i in self.scene.selectedItems()}
                 self.interaction_started.emit()
                 return
-        if self.mode == Mode.RAZOR:
+        elif self.mode == Mode.RAZOR:
             if isinstance(item, ClipItem):
+                if self.mw: self.mw.playback.player.pause()
                 pt = self.mapToScene(event.pos())
                 snapped_x = self.get_snapped_x(pt.x(), track_idx=item.track, threshold=20)
                 self.clip_split_requested.emit(item, snapped_x / self.scale_factor)
                 if self.snap_line: self.snap_line.hide()
             return
-        px_scene = self.playhead_pos * self.scale_factor
-        px_vp = self.mapFromScene(QPointF(px_scene, 0)).x()
-        if abs(event.pos().x() - px_vp) < 10 or event.pos().y() < self.ruler_height:
+        elif is_clicking_playhead_or_ruler:
             self.is_dragging_playhead = True
             self.interaction_started.emit()
             self.user_set_playhead(self.mapToScene(event.pos()).x())
             return
-        super().mousePressEvent(event)
+        else:
+            if self.mw: 
+                self.mw.playback.player.pause()
+                scene_pos = self.mapToScene(event.pos())
+                self.user_set_playhead(scene_pos.x())
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         frame_dur = 1.0 / 60.0 
@@ -359,7 +371,11 @@ class TimelineView(QGraphicsView):
                 for other in self.scene.items():
                     if isinstance(other, ClipItem) and other != item and other.track == item.track and other.pos().x() > item.pos().x():
                         next_clip_x = min(next_clip_x, other.pos().x())
-                new_w = min(new_w, next_clip_x - item.pos().x())
+                if item.pos().x() + new_w >= next_clip_x:
+                    new_w = next_clip_x - item.pos().x()
+                    item.is_colliding = True
+                else:
+                    item.is_colliding = False
                 new_w = max(10, new_w)
                 new_duration = round((new_w / self.scale_factor) / frame_dur) * frame_dur
                 source_playable_duration = (item.model.source_duration - item.model.source_in) * item.model.speed
@@ -375,7 +391,11 @@ class TimelineView(QGraphicsView):
                 for other in self.scene.items():
                     if isinstance(other, ClipItem) and other != item and other.track == item.track and other.pos().x() < item.pos().x():
                         prev_clip_end_x = max(prev_clip_end_x, other.pos().x() + other.rect().width())
-                new_x = max(new_x, prev_clip_end_x)
+                if new_x <= prev_clip_end_x:
+                    new_x = prev_clip_end_x
+                    item.is_colliding = True
+                else:
+                    item.is_colliding = False
                 new_w = (start_x + start_w) - new_x
                 new_w = max(10, new_w)
                 new_x = (start_x + start_w) - new_w
@@ -390,6 +410,7 @@ class TimelineView(QGraphicsView):
                     item.model.source_in += delta_t
                 item.model.start = new_start
                 item.model.duration = new_duration
+            item.update_cache()
             if item.model.linked_uid:
                 for other in self.scene.items():
                     if isinstance(other, ClipItem) and other.uid == item.model.linked_uid:
@@ -398,6 +419,7 @@ class TimelineView(QGraphicsView):
                         other.model.source_in = item.model.source_in
                         other.model.start_freeze = item.model.start_freeze
                         other.model.end_freeze = item.model.end_freeze
+                        other.update_cache()
                         break
             self.update_clip_positions()
             self.data_changed.emit()
@@ -411,7 +433,7 @@ class TimelineView(QGraphicsView):
             main_item_start_pos = self.drag_start_item_positions[main_item]
             raw_delta_x = self.mapToScene(event.pos()).x() - self.drag_start_pos.x()
             raw_y = self.mapToScene(event.pos()).y()
-            new_track = max(0, int((raw_y - self.ruler_height) / self.track_height))
+            new_track = max(0, int(round((raw_y - self.ruler_height) / self.track_height)))
             raw_x = main_item_start_pos.x() + raw_delta_x
             if self.snapping_enabled:
                 visible_items = self.items(self.viewport().rect())
@@ -479,17 +501,12 @@ class TimelineView(QGraphicsView):
             return
         if self.is_dragging_clip:
             self.is_dragging_clip = False
-            if self.snap_line:
-                self.scene.removeItem(self.snap_line)
-            if self.ghost_item:
-                self.scene.removeItem(self.ghost_item)
-                self.ghost_item = None
-            self.snap_line = None
+            self._cleanup_drag_items()
             for item in self.get_selected_items():
                 item.is_colliding = False
                 item.setToolTip("")
                 item.model.start = item.x() / self.scale_factor
-                item.model.track = int((item.y() - constants.RULER_HEIGHT) / self.track_height)
+                item.model.track = int(round((item.y() - constants.RULER_HEIGHT) / self.track_height))
                 item.update_cache()
                 item.update()
             self.mw.save_state_for_undo()
@@ -499,9 +516,7 @@ class TimelineView(QGraphicsView):
             self.is_dragging_playhead = False
             if self.mw:
                 self.mw.playback.mark_dirty(serious=True)
-            if self.snap_line:
-                self.scene.removeItem(self.snap_line)
-                self.snap_line = None
+            self._cleanup_drag_items()
             self.interaction_ended.emit()
 
     def contextMenuEvent(self, event):
@@ -517,6 +532,10 @@ class TimelineView(QGraphicsView):
 
     def dropEvent(self, event):
         if event.mimeData().hasUrls():
+            if self.mw and hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+                self.mw.playback.player.pause()
+                self.mw.playback.timer.stop()
+                self.mw.playback.state_changed.emit(False)
             pt = self.mapToScene(event.pos())
             item = self.itemAt(event.pos())
             time_pos = 0
@@ -571,14 +590,14 @@ class TimelineView(QGraphicsView):
                 item.scale = self.scale_factor
                 item.setPos(item.model.start * self.scale_factor, item.model.track * self.track_height + constants.RULER_HEIGHT)
                 total_duration = item.model.duration + item.model.start_freeze + item.model.end_freeze
-                item.setRect(0, 0, total_duration * self.scale_factor, 30)
+                item.setRect(0, 0, total_duration * self.scale_factor, constants.TRACK_HEIGHT)
 
     def user_set_playhead(self, x):
         """Goal 8: Frame-accurate scrubbing with absolute pixel locking."""
         frame_dur = 1.0 / 60.0
         sec = round((x / self.scale_factor) / frame_dur) * frame_dur
         sec = max(0, sec)
-        if x >= self.scene.width() - 50:
+        if self.is_dragging_playhead and x >= self.scene.width() - 50:
             self.scene.setSceneRect(0, 0, x + 10000, self.scene.height())
         self.playhead_pos = sec
         self.viewport().update()
@@ -659,10 +678,11 @@ class TimelineView(QGraphicsView):
         items = [i for i in self.scene.items() if isinstance(i, ClipItem)]
         if not items:
             return 0.0
-        return max(i.model.start + i.model.duration for i in items)
+        return max(i.model.start + i.model.duration + i.model.start_freeze + i.model.end_freeze for i in items)
 
     def load_state(self, state):
         self.logger.info(f"Loading timeline state with {len(state)} clips.")
+        self._cleanup_drag_items()
         self.scene.clear()
         for c in state:
             self.add_clip(c)
@@ -698,6 +718,15 @@ class TimelineView(QGraphicsView):
         else:
             self.clip_selected.emit([])
             self.track_headers.set_selected(-1)
+
+    def _cleanup_drag_items(self):
+        """Removes ghost_item and snap_line from scene to prevent memory leaks."""
+        if self.snap_line:
+            self.scene.removeItem(self.snap_line)
+            self.snap_line = None
+        if self.ghost_item:
+            self.scene.removeItem(self.ghost_item)
+            self.ghost_item = None
 
     def _execute_throttled_scrub(self):
         """Executes the stored seek request once the throttle interval passes."""

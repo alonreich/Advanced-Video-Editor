@@ -10,7 +10,6 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
 from system import setup_system, StreamToLogger
 from binary_manager import BinaryManager
-from main_window import MainWindow
 
 def exception_hook(exctype, value, tb):
     """Goal 19: Global Exception Hook for Emergency Sidecar Recovery."""
@@ -74,6 +73,22 @@ if __name__ == "__main__":
     sys.stdout = StreamToLogger(logger, logging.INFO)
     sys.stderr = StreamToLogger(logger, logging.ERROR)
     logger.info("=== Booting Advanced Video Editor ===")
+    try:
+        from system import ConfigManager
+        config = ConfigManager(os.path.join(base_dir, "config", "Advanced_Video_Editor.conf"))
+        binary_manager = BinaryManager(config)
+        binary_manager.ensure_env()
+        # Set MPV_LIBRARY to libmpv-2.dll for python-mpv
+        bin_dir = binary_manager.get_bin_path()
+        libmpv_path = os.path.join(bin_dir, "libmpv-2.dll")
+        if os.path.exists(libmpv_path):
+            os.environ["MPV_LIBRARY"] = libmpv_path
+            logger.info(f"Set MPV_LIBRARY to {libmpv_path}")
+        else:
+            logger.warning(f"libmpv-2.dll not found at {libmpv_path}")
+        logger.info("Binary environment set up successfully")
+    except Exception as e:
+        logger.error(f"Failed to set up binary environment: {e}")
     logger.info("Importing MainWindow...")
     logger.info("Creating QApplication...")
     app = QApplication(sys.argv)
@@ -96,16 +111,22 @@ if __name__ == "__main__":
     p.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(p)
     try:
+        from main_window import MainWindow
         logger.info("Creating MainWindow...")
         file_to_load = sys.argv[1] if len(sys.argv) > 1 else None
-        window = MainWindow(base_dir, file_to_load=file_to_load)
+        window = MainWindow(base_dir, binary_manager, file_to_load=file_to_load)
         logger.info("Showing MainWindow...")
         window.show()
-        native_hwnd = window.winId().__int__()
-        if enable_drag_drop_for_elevated_app(native_hwnd):
-            logger.info(f"[UIPI] Firewall bypassed for HWND {native_hwnd}. Drag-and-drop is now enabled for Admin mode.")
-        else:
-            logger.error("[UIPI] Failed to apply elevation workaround.")
+        try:
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+        if is_admin:
+            native_hwnd = window.winId().__int__()
+            if enable_drag_drop_for_elevated_app(native_hwnd):
+                logger.info(f"[UIPI] Firewall bypassed for HWND {native_hwnd}. Drag-and-drop is now enabled for Admin mode.")
+            else:
+                logger.error("[UIPI] Failed to apply elevation workaround.")
         logger.info("Starting app event loop...")
         sys.exit(app.exec_())
     except Exception as e:

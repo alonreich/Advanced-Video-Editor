@@ -130,7 +130,29 @@ class ProjectController:
         pass
 
     def populate_project_list(self, menu):
-        menu.clear()
+        # Keep the first two actions (Save Project and separator) if they exist
+        actions = menu.actions()
+        save_action = None
+        separator = None
+        for act in actions:
+            if act.text() == "Save Project":
+                save_action = act
+            elif act.isSeparator():
+                separator = act
+        # Remove all actions except save_action and separator
+        for act in actions:
+            if act != save_action and act != separator:
+                menu.removeAction(act)
+        # Ensure Save Project and separator are present
+        if not save_action:
+            save_action = QAction("Save Project", self.mw)
+            save_action.setShortcut("Ctrl+S")
+            save_action.setToolTip("Force a manual project save")
+            save_action.triggered.connect(self.run_autosave)
+            menu.addAction(save_action)
+        if not separator:
+            menu.addSeparator()
+        # Add project list
         projects = self.pm.get_all_projects()
         projects.sort(key=lambda x: x['last_saved'], reverse=True)
         if not projects:

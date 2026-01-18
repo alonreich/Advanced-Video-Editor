@@ -97,9 +97,13 @@ class InspectorWidget(QWidget):
         self.btn_resync.setStyleSheet(f"background-color: {constants.COLOR_PRIMARY.name()}; color: white; font-weight: bold; padding: 4px;")
         self.btn_resync.clicked.connect(self.on_resync_clicked)
         self.btn_resync.hide()
-        ctrl_layout.addWidget(self.chk_lock_pos)
-        ctrl_layout.addWidget(self.chk_mute_track)
-        ctrl_layout.addWidget(self.chk_main_audio)
+        # Align checkboxes in a centered column
+        grid = QGridLayout()
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(2, 1)
+        for i, chk in enumerate([self.chk_lock_pos, self.chk_mute_track, self.chk_main_audio]):
+            grid.addWidget(chk, i, 1)
+        ctrl_layout.addLayout(grid)
         ctrl_layout.addWidget(self.btn_resync)
         self.mic_meter = GatedProgressBar()
         self.mic_meter.setRange(0, 100)
@@ -158,8 +162,29 @@ class InspectorWidget(QWidget):
         l = QHBoxLayout(gb)
         l.setContentsMargins(5, 5, 5, 5) 
         slider = QSlider(Qt.Horizontal)
-        slider.setRange(int(min_val*100), int(max_val*100))
-        slider.setValue(int(default*100))
+        # For speed slider, adjust range so that default 1.0 is centered
+        if param_name == 'speed':
+            # Want slider min=0.1, max=1.9 (so that 1.0 is midpoint)
+            slider_min = 0.1
+            slider_max = 1.9
+            slider.setRange(int(slider_min * 100), int(slider_max * 100))
+            # Map spin value to slider position
+            def spin_to_slider(val):
+                if val <= slider_min:
+                    return int(slider_min * 100)
+                elif val >= slider_max:
+                    return int(slider_max * 100)
+                else:
+                    return int(val * 100)
+            def slider_to_spin(pos):
+                return pos / 100.0
+            # Set initial slider position based on default (should be 1.0)
+            slider.setValue(int(default * 100))
+        else:
+            slider.setRange(int(min_val*100), int(max_val*100))
+            slider.setValue(int(default*100))
+            spin_to_slider = lambda v: int(v*100)
+            slider_to_spin = lambda p: p/100.0
         spin = QDoubleSpinBox()
         spin.setRange(min_val, max_val)
         spin.setValue(default)
@@ -169,10 +194,24 @@ class InspectorWidget(QWidget):
             spin.setSingleStep(1)
         else:
             spin.setSingleStep(0.1)
-        spin.valueChanged.connect(lambda v: slider.setValue(int(v*100)))
-        spin.editingFinished.connect(lambda: self.param_changed.emit(param_name, spin.value()))
-        slider.valueChanged.connect(lambda v: spin.setValue(v/100))
-        slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, slider.value()/100))
+        # Custom connections for speed
+        if param_name == 'speed':
+            def on_spin_changed(v):
+                slider.setValue(spin_to_slider(v))
+                self.param_changed.emit(param_name, v)
+            spin.valueChanged.connect(on_spin_changed)
+            spin.editingFinished.connect(lambda: self.param_changed.emit(param_name, spin.value()))
+            def on_slider_changed(pos):
+                spin.blockSignals(True)
+                spin.setValue(slider_to_spin(pos))
+                spin.blockSignals(False)
+            slider.valueChanged.connect(on_slider_changed)
+            slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, slider_to_spin(slider.value())))
+        else:
+            spin.valueChanged.connect(lambda v: slider.setValue(spin_to_slider(v)))
+            spin.editingFinished.connect(lambda: self.param_changed.emit(param_name, spin.value()))
+            slider.valueChanged.connect(lambda v: spin.setValue(slider_to_spin(v)))
+            slider.sliderReleased.connect(lambda: self.param_changed.emit(param_name, slider_to_spin(slider.value())))
         btn_reset = QToolButton()
         btn_reset.setText("⟲")
         btn_reset.setCursor(Qt.PointingHandCursor)
@@ -197,6 +236,7 @@ class InspectorWidget(QWidget):
         self.btn_crop_toggle.setCheckable(True)
         self.btn_crop_toggle.setCursor(Qt.PointingHandCursor)
         self.btn_crop_toggle.setToolTip("Toggle crop mode in the preview window")
+        self.btn_crop_toggle.setFixedWidth(100)
         self.btn_crop_toggle.setFixedHeight(22) 
         self.btn_crop_toggle.clicked.connect(self.crop_toggled.emit)
         self.btn_crop_toggle.setStyleSheet(f"""
@@ -212,9 +252,14 @@ class InspectorWidget(QWidget):
             QPushButton:hover {{ background-color: {constants.COLOR_BACKGROUND.lighter(70).name()}; }}
             QPushButton:checked:hover {{ background-color: #E64A19; }}
         """)
-        l.addWidget(self.btn_crop_toggle)
+        # Center the button in the layout
+        hbox = QHBoxLayout()
+        hbox.addStretch()
+        hbox.addWidget(self.btn_crop_toggle)
+        hbox.addStretch()
+        l.addLayout(hbox)
         grid = QGridLayout()
-        grid.setSpacing(2) 
+        grid.setSpacing(1)  # Reduced spacing
         grid.setContentsMargins(0, 0, 0, 0)
         self.spin_crop_x1 = self.make_crop_spin()
         self.spin_crop_y1 = self.make_crop_spin()
@@ -228,6 +273,7 @@ class InspectorWidget(QWidget):
         def lbl(t):
             l = QLabel(t)
             l.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            l.setStyleSheet("font-size: 10px;")  # Smaller font
             return l
         grid.addWidget(lbl("X1"), 0, 0)
         grid.addWidget(self.spin_crop_x1, 0, 1)
@@ -254,7 +300,7 @@ class InspectorWidget(QWidget):
         s.setButtonSymbols(QDoubleSpinBox.NoButtons)
         s.setAlignment(Qt.AlignCenter)
         s.setDecimals(0)
-        s.setFixedWidth(40) 
+        s.setFixedWidth(35)  # Reduced width
         s.setFixedHeight(20)
         s.setStyleSheet("font-size: 11px; padding: 0px;")
         return s

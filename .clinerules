@@ -1,0 +1,206 @@
+# Advanced Video Editor - Project Rules & Architecture
+
+## Project Overview
+This is a **GPU-accelerated desktop video editing application** built with Python and PyQt5. It uses FFmpeg for rendering and MPV for playback. The application enforces deterministic timeline behavior with hard collision detection and provides professional-grade video editing capabilities.
+
+## Core Architecture
+
+### Entry Point
+- **`advanced_video_editor.py`**: Main entry point that bootstraps the application
+  - Sets up global exception hook for crash recovery (Goal 19)
+  - Implements UIPI elevation workaround for drag-and-drop in Admin mode
+  - Initializes QApplication with Fusion dark theme
+  - Creates and shows MainWindow
+
+### Central UI (`main_window.py`)
+- **MainWindow**: Central docking UI orchestrating all components
+  - Manages: Timeline, Preview, Inspector, Media Pool
+  - Integrates: ProjectController, ClipManager, AssetLoader, PlaybackManager
+  - Handles keyboard shortcuts and global actions
+  - Coordinates undo/redo through UndoStack (50-step history)
+
+## Data Model
+
+### `model.py` - ClipModel Dataclass
+Core data representation for clips with fields:
+- **Position**: `path`, `track`, `start`, `duration`
+- **Source**: `source_in`, `source_duration`, `speed`
+- **Transform**: `scale_x`, `scale_y`, `pos_x`, `pos_y`, `crop_*`
+- **Effects**: `fade_in`, `fade_out`, `volume`
+- **Freeze frames**: `start_freeze`, `end_freeze`
+- **Linking**: `linked_uid` for A/V sync
+- **Identity**: `uid` (UUID), `name`, `media_type`
+
+## Timeline System
+
+### Key Files
+- **`timeline_view.py`**: Main interaction handler
+  - Implements POINTER and RAZOR modes
+  - Hard collision detection (clips cannot overlap on same lane)
+  - Magnetic snapping (40px playhead magnetism)
+  - Gap detection with ripple shift prompts (Goal 5)
+  - Frame-accurate scrubbing (1/60s precision)
+
+- **`timeline_scene.py`**: QGraphicsScene for timeline rendering
+- **`timeline_grid.py`**: Ruler and playhead painting
+- **`timeline_ops.py`**: Structural operations (A/V splitting, track reordering)
+- **`timeline_container.py`**: Scalable container with track headers
+
+### Clip System
+- **`clip_item.py`**: Visual QGraphicsItem representation
+- **`clip_painter.py`**: Drawing logic for waveforms, thumbnails, borders
+- **`clip_manager.py`**: Razor logic, selection, gap prompts
+
+## Rendering Engine
+
+### `ffmpeg_generator.py` - FilterGraphGenerator
+Builds FFmpeg filter graphs dynamically:
+- **Video chain**: color base → trim → scale → setpts → overlay (layered)
+- **Audio chain**: atrim → asetpts → adelay → amix
+- Handles multiple clips from same source via split/asplit
+- Supports occlusion-aware rendering optimization (Goal 15)
+
+### `filter_graph.py` - FilterGraph & FilterNode
+Low-level FFmpeg filter graph construction:
+- Node-based architecture with input/output pins
+- Generates FFmpeg `-filter_complex` string
+
+### `render_worker.py` - RenderWorker
+High-priority export threading for final video output
+
+### `playback_manager.py` - PlaybackManager
+Real-time playback coordination:
+- Syncs playhead with MPV player
+- Throttles background tasks during playback (Goal 20)
+
+## Media Backend
+
+### `player.py` - MPVPlayer
+MPV-based video backend for frame-accurate seek
+
+### `binary_manager.py` - BinaryManager
+- GPU detection (NVENC, QSV, AMF)
+- DLL environment setup
+- Uses libmpv-2.dll directly (native MPV support). No longer clones to mpv-1.dll.
+
+### `prober.py`
+FFprobe metadata extraction and waveform generation workers
+
+## Project Management
+
+### `project.py` - ProjectManager
+- FIFO logic enforcing 10-project limit (Goal 11)
+- Project directory management
+
+### `project_controller.py` - ProjectController
+- High-level state switching
+- Autosave timer
+- Crash recovery via sidecar files
+
+### `history.py` - UndoStack
+- 50-depth undo/redo with delta compression (Goal 12)
+- Smart push logic to prevent memory bloat
+
+## UI Components
+
+### `preview.py` - PreviewWidget
+- Video preview with SafeOverlay for interactive transforms (Goal 16)
+- Real-time manipulation handles for scale, position, crop
+
+### `inspector.py` - InspectorWidget
+- Clip property sliders (Speed, Volume, Crop)
+- Resolution switching (Landscape/Portrait)
+
+### `media_pool.py` - MediaPoolWidget
+- Drag-and-drop asset management
+
+### `export_dialog.py` - ExportDialog
+- Rendering UI with file size estimation
+
+## Workers (Background Tasks)
+
+### `asset_loader.py` - AssetLoader
+- File import with duplicate prevention
+- Async thumbnail and waveform generation
+
+### `worker.py`
+- GPU-hijacked proxy & thumbnail generation (Goal 14)
+
+### `recorder.py` & `voice_recorder.py`
+- Voiceover recording triggered by 'V' key
+- Mic level monitoring
+
+## Configuration
+
+### `system.py`
+- ConfigManager for persistent settings
+- Rotating log system
+
+### `constants.py`
+- Color definitions, dimensions, stylesheet constants
+
+## Key Design Principles
+
+1. **Deterministic Timeline**: Clips are solid objects that cannot overlap
+2. **Hard Collision Detection**: Movement blocked with visual warning
+3. **Magnetic Snapping**: Playhead has 2x magnetism (40px threshold)
+4. **Frame-Accurate Editing**: All operations quantized to 1/60s
+5. **GPU-First Rendering**: Auto-detects hardware encoders
+6. **Crash Recovery**: Emergency sidecar logging for fatal failures
+7. **Keyboard-First Workflow**: Extensive shortcuts (Ctrl+K split, [ ] trim, C crop)
+
+## Important Shortcuts
+- **Space**: Play/Pause
+- **V**: Start/Stop voiceover recording
+- **C**: Toggle razor/crop mode
+- **Ctrl+K**: Split at playhead
+- **[**: Trim start to playhead
+- **]**: Trim end to playhead
+- **Delete**: Delete selected clip
+- **Shift+Delete**: Ripple delete
+- **Ctrl+Arrow**: Aggressive seeking (3s jumps)
+- **Arrow**: Frame stepping (1/60s)
+- **Ctrl+S**: Save project
+- **Ctrl+Scroll**: Timeline zoom
+
+## File Dependencies
+```
+advanced_video_editor.py
+├── system.py (setup_system, StreamToLogger, ConfigManager)
+├── binary_manager.py (BinaryManager)
+└── main_window.py
+    ├── project_controller.py → project.py (ProjectManager)
+    ├── clip_manager.py
+    ├── asset_loader.py → worker.py, prober.py
+    ├── playback_manager.py → player.py (MPVPlayer)
+    ├── history.py (UndoStack)
+    ├── recorder.py, voice_recorder.py
+    ├── timeline_container.py → timeline_view.py → timeline_scene.py
+    │                         → timeline_grid.py, timeline_ops.py
+    │                         → clip_item.py → clip_painter.py
+    │                         → track_header.py
+    ├── preview.py
+    ├── inspector.py
+    ├── media_pool.py
+    ├── export_dialog.py → render_worker.py → ffmpeg_generator.py
+    └── shortcuts_dialog.py
+```
+
+## Testing
+
+### System Sanity Test (`test_core_logic.py`)
+- **Location**: Root directory
+- **Purpose**: Validates the 30 core logic scenarios described in the specification.
+- **Coverage**: Tests layering, occlusion, audio mixing, timeline offsets, gap detection, and other critical behaviors.
+- **Usage**: Run after any change to core functionality to ensure no regressions.
+  ```bash
+  python -m pytest test_core_logic.py -x
+  ```
+- **Integration**: Part of the continuous integration workflow; must pass before merging changes.
+
+## Development Notes
+- All paths should use forward slashes for FFmpeg compatibility
+- Clip UIDs are UUIDs for unique identification
+- Linked clips (A/V pairs) share transformations via `linked_uid`
+- Timeline scale_factor converts between seconds and pixels
+- Track index 0 is topmost video track

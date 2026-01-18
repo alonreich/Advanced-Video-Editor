@@ -78,8 +78,8 @@ class ProbeWorker(QRunnable):
                     info.update(cached_data)
                 self._safe_emit(info)
                 return
-            except Exception:
-                logger.warning(f"[PROBE-CACHE] Corrupt cache file, regenerating: {cache_file}")
+            except Exception as e:
+                logger.warning(f"[PROBE-CACHE] Corrupt cache file, regenerating: {cache_file}. Error: {e}")
         try:
             ffprobe_bin = shutil.which('ffprobe')
             if not ffprobe_bin:
@@ -130,16 +130,14 @@ class ProbeWorker(QRunnable):
                     logger.warning(f"[PROBE-CACHE] Failed to write cache: {e}")
             info.update(phys_data)
             self._safe_emit(info)
-        except FileNotFoundError:
-            logger.critical("FATAL: ffprobe binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
-            info['error'] = "ffprobe not found. Please install ffmpeg."
-            self._safe_emit(info)
-        except subprocess.CalledProcessError as e:
-            logger.error(f"[BINARY FAILURE] Probe failed for {self.path}. Exit code: {e.returncode}")
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            error_message = f"Probe failed for {self.path}: {e}"
+            logger.error(error_message)
             info['error'] = str(e)
             self._safe_emit(info)
         except Exception as e:
-            logger.error(f"Probe Failed:\n{traceback.format_exc()}")
+            error_message = f"An unexpected error occurred during probe for {self.path}: {e}"
+            logger.error(error_message, exc_info=True)
             info['error'] = str(e)
             self._safe_emit(info)
 
@@ -170,17 +168,19 @@ class AudioAnalysisWorker(QRunnable):
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=si, encoding='utf-8')
             output = result.stderr
-            mean_volume_match = re.search(r"mean_volume:\s*([-\d\.]+)\n", output)
+            mean_volume_match = re.search(r"mean_volume:\s*([-\d\.]+)", output)
             if mean_volume_match:
                 mean_volume = float(mean_volume_match.group(1))
                 self._safe_emit({'uid': self.uid, 'mean_volume': mean_volume})
             else:
                 self._safe_emit({'uid': self.uid, 'error': 'Could not determine mean volume.'})
-        except FileNotFoundError:
-            logger.critical("FATAL: ffmpeg binary not found. Please ensure ffmpeg is installed and in your system's PATH.")
-            self._safe_emit({'uid': self.uid, 'error': "ffmpeg not found. Please install ffmpeg."})
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            error_message = f"Audio analysis failed for {self.path}: {e}"
+            logger.error(error_message)
+            self._safe_emit({'uid': self.uid, 'error': str(e)})
         except Exception as e:
-            logger.error(f"Audio Analysis Failed:\n{traceback.format_exc()}")
+            error_message = f"An unexpected error occurred during audio analysis for {self.path}: {e}"
+            logger.error(error_message, exc_info=True)
             self._safe_emit({'uid': self.uid, 'error': str(e)})
 
 class WaveformWorker(QThread):

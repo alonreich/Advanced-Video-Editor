@@ -19,6 +19,10 @@ class ClipManager:
 
     def split_at(self, item, time, splitting_linked=False):
         """Splits a clip and its linked partner simultaneously."""
+        if self.mw and hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+            self.mw.playback.player.pause()
+            self.mw.playback.timer.stop()
+            self.mw.playback.state_changed.emit(False)
         if not (item.start < time < item.start + item.duration): return
         split_rel = time - item.start
         right_dur = item.duration - split_rel
@@ -55,6 +59,10 @@ class ClipManager:
 
     def delete_current(self):
         """Deletes the selected clip and leaves a gap on the timeline."""
+        if self.mw and hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+            self.mw.playback.player.pause()
+            self.mw.playback.timer.stop()
+            self.mw.playback.state_changed.emit(False)
         selected_items = self.mw.timeline.get_selected_items()
         if not selected_items: return
         for item in selected_items:
@@ -165,6 +173,10 @@ class ClipManager:
 
     def ripple_delete_current(self):
         """Goal 5: Deletes selection and shifts subsequent clips without prompting."""
+        if self.mw and hasattr(self.mw, 'playback') and self.mw.playback.player.is_playing():
+            self.mw.playback.player.pause()
+            self.mw.playback.timer.stop()
+            self.mw.playback.state_changed.emit(False)
         selected_items = self.mw.timeline.get_selected_items()
         if not selected_items: return
         earliest_start = min([item.model.start for item in selected_items])

@@ -70,6 +70,11 @@ class ClipItem(QGraphicsRectItem):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemSelectedHasChanged:
             self.update_cache()
+        elif change == QGraphicsItem.ItemSceneChange and not value:
+            self.cached_pixmap = None
+            self.waveform_pixmap = None
+            self.thumbnail_start = None
+            self.thumbnail_end = None
         return super().itemChange(change, value)
 
     def update_cache(self):
@@ -131,24 +136,33 @@ class ClipItem(QGraphicsRectItem):
         super().mouseReleaseEvent(event)
 
     def set_speed(self, speed):
-        """Goal 2: Change speed with strict bidirectional collision detection."""
-        source_dur = self.model.duration * self.model.speed
-        new_dur = source_dur / speed
+        """Goal 2: Change speed with strict bidirectional collision detection.
+        Freeze frames are not affected by speed changes."""
+        if speed <= 0:
+            return
+        # Calculate playable duration (excluding freeze frames)
+        playable_duration = self.model.duration - self.model.start_freeze - self.model.end_freeze
+        if playable_duration <= 0:
+            # Only freeze frames, speed change has no effect
+            return
+        source_playable_duration = playable_duration * self.model.speed
+        new_playable_duration = source_playable_duration / speed
+        new_duration = new_playable_duration + self.model.start_freeze + self.model.end_freeze
         new_start = self.model.start
-        new_end = new_start + new_dur
+        new_end = new_start + new_duration
         if self.scene():
             for item in self.scene().items():
                 if isinstance(item, ClipItem) and item != self and item.track == self.track:
                     n_start = item.model.start
-                    n_end = n_start + item.model.duration
+                    n_end = n_start + item.model.duration + item.model.start_freeze + item.model.end_freeze
                     if (new_start < n_end - 0.001) and (new_end > n_start + 0.001):
                         self.logger.warning(f"[COLLISION] Speed change blocked. Overlap with '{item.name}' [{n_start:.2f}s - {n_end:.2f}s]")
                         return
         self.speed = speed
         self.model.speed = speed
-        self.model.duration = new_dur
-        self.duration = new_dur
-        self.setRect(0, 0, new_dur * self.scale, constants.TRACK_HEIGHT)
+        self.model.duration = new_duration
+        self.duration = new_duration
+        self.setRect(0, 0, new_duration * self.scale, constants.TRACK_HEIGHT)
         self.update_cache()
 
     def set_volume(self, volume):

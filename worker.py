@@ -32,7 +32,6 @@ class ThumbnailWorker(QThread):
             return self.hwaccel_args, self.scale_filter
 
         from binary_manager import BinaryManager
-        BinaryManager.ensure_env()
         gpu_codec = BinaryManager.get_best_encoder(self.logger)
         self.checked_hwaccel = True
         if gpu_codec in ['h264_nvenc', 'hevc_nvenc', 'av1_nvenc']:
@@ -89,19 +88,31 @@ class ThumbnailWorker(QThread):
             vf_chain = f"{s_filter}=-2:120,hwdownload,format=nv12"
             cmd += hw_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
         elif hw_args and 'qsv' in hw_args:
-            vf_chain = f"scale_qsv=w=-1:h=120,hwdownload,format=nv12"
-            device_args = ['-init_hw_device', 'qsv=qsv:hw', '-filter_hw_device', 'qsv']
-            cmd += hw_args + device_args + ['-ss', str(seek_time), '-i', in_path, '-vf', vf_chain]
+            try:
+                vf_chain = "scale_qsv=w=-1:h=120"
+                cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', 
+                       '-hwaccel', 'qsv', '-hwaccel_output_format', 'qsv',
+                       '-ss', str(seek_time), '-i', in_path,
+                       '-vf', vf_chain, '-vframes', '1', '-y', out_path]
+                success, err_msg = self.run_ffmpeg(cmd, si)
+                if success:
+                    return
+            except Exception:
+                pass
+            self.logger.warning(f"[THUMB] QSV failed for {os.path.basename(in_path)}, falling back to CPU...")
+            cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', 
+                   '-ss', str(seek_time), '-i', in_path, 
+                   '-vf', 'scale=-1:120', '-vframes', '1', '-y', out_path]
         else:
             cmd += ['-ss', str(seek_time), '-i', in_path, '-vf', "scale=-2:120"]
-        cmd += ['-vframes', '1', '-y', out_path]
+            cmd += ['-vframes', '1', '-y', out_path]
+            success, err_msg = self.run_ffmpeg(cmd, si)
+            if not success:
+                self.logger.error(f"[THUMB] FFmpeg failure for {os.path.basename(in_path)}: {err_msg}")
+            return
         success, err_msg = self.run_ffmpeg(cmd, si)
         if not success:
-            self.logger.warning(f"[THUMB] GPU failed for {os.path.basename(in_path)}, retrying on CPU...")
-            fallback_cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-ss', str(seek_time), '-i', in_path, '-vf', 'scale=-1:120', '-vframes', '1', '-y', out_path]
-            success, err_msg = self.run_ffmpeg(fallback_cmd, si)
-            if not success:
-                self.logger.error(f"[THUMB] FFmpeg total failure for {os.path.basename(in_path)}: {err_msg}")
+            self.logger.error(f"[THUMB] FFmpeg total failure for {os.path.basename(in_path)}: {err_msg}")
 
     def run_ffmpeg(self, cmd, startup_info):
         try:
@@ -215,4 +226,12 @@ class ProxyWorker(QThread):
             subprocess.run(cmd, startupinfo=si, check=True)
             self.proxy_finished.emit(uid, out_path)
         except subprocess.CalledProcessError as e:
-            self.logger.error(f"[PROXY] Generation failed: {e}")
+            self.logger.error(f"[PROXY] GPU generation failed: {e}, falling back to CPU...")
+            cmd_fallback = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', path,
+                           '-vf', 'scale=-2:540', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
+                           '-c:a', 'aac', '-b:a', '96k', '-ac', '2', out_path]
+            try:
+                subprocess.run(cmd_fallback, startupinfo=si, check=True)
+                self.proxy_finished.emit(uid, out_path)
+            except subprocess.CalledProcessError as e2:
+                self.logger.error(f"[PROXY] CPU fallback also failed: {e2}")

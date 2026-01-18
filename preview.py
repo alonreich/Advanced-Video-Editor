@@ -97,9 +97,8 @@ class SafeOverlay(QWidget):
         self.update()
 
     def toggle_crop_mode(self, external_call=False):
-        """Toggle crop mode with optional parameter to indicate external call."""
-        if external_call:
-            self.crop_mode = not self.crop_mode
+        """Toggle crop mode. external_call is ignored (kept for compatibility)."""
+        self.crop_mode = not self.crop_mode
         if self.crop_mode and self.selected_clip:
             if hasattr(self.parent(), 'apply_crop'):
                 self.parent().apply_crop(None) 
@@ -218,26 +217,107 @@ class SafeOverlay(QWidget):
             p.restore()
 
     def draw_portrait_guides(self, p, v_rect):
-        """Goal 16: Dim out the 'cut-off' areas for center-cut Portrait export."""
-        widget_rect = self.rect()
+        """Goal 16: Dim out the 'cut-off' areas for center-cut Portrait export.
+        Only the sides outside the portrait width should be dimmed, leaving the
+        middle visible all the way up and down."""
+        target_w, target_h = self.target_res
+        if target_w == 0 or target_h == 0:
+            return
+        target_aspect = target_w / target_h
+        video_aspect = v_rect.width() / v_rect.height()
+        self.logger.debug(f"[PORTRAIT] target_aspect={target_aspect:.3f}, video_aspect={video_aspect:.3f}, branch={'sides' if target_aspect < video_aspect else 'top/bottom'}")
+        
         p.save()
-        bg_path = QPainterPath()
-        bg_path.addRect(QRectF(widget_rect))
-        bg_path.addRect(v_rect)
-        p.setClipPath(bg_path)
-        p.fillRect(widget_rect, QColor(0, 0, 0, 180))
-        p.restore()
-        portrait_width = v_rect.height() * (9 / 16)
-        center_x = v_rect.center().x()
-        left_edge = center_x - (portrait_width / 2)
-        right_edge = center_x + (portrait_width / 2)
-        p.save()
-        p.setBrush(QColor(0, 0, 0, 140))
-        p.setPen(Qt.NoPen)
-        p.drawRect(QRectF(v_rect.left(), v_rect.top(), left_edge - v_rect.left(), v_rect.height()))
-        p.drawRect(QRectF(right_edge, v_rect.top(), v_rect.right() - right_edge, v_rect.height()))
-        p.setPen(QPen(QColor(0, 255, 255, 200), 2, Qt.DashLine))
-        p.drawRect(QRectF(left_edge, v_rect.top(), portrait_width, v_rect.height()))
+        if target_aspect < video_aspect:
+            # Portrait is narrower than video: dim sides
+            portrait_width = v_rect.height() * target_aspect
+            center_x = v_rect.center().x()
+            left_edge = center_x - (portrait_width / 2)
+            right_edge = center_x + (portrait_width / 2)
+            
+            # Ensure edges are within video rect
+            left_edge = max(v_rect.left(), left_edge)
+            right_edge = min(v_rect.right(), right_edge)
+            
+            # Draw left dimmed area
+            if left_edge > v_rect.left():
+                p.setBrush(QColor(0, 0, 0, 160))
+                p.setPen(Qt.NoPen)
+                p.drawRect(QRectF(v_rect.left(), v_rect.top(), left_edge - v_rect.left(), v_rect.height()))
+            
+            # Draw right dimmed area
+            if right_edge < v_rect.right():
+                p.setBrush(QColor(0, 0, 0, 160))
+                p.setPen(Qt.NoPen)
+                p.drawRect(QRectF(right_edge, v_rect.top(), v_rect.right() - right_edge, v_rect.height()))
+            
+            # Draw portrait area outline
+            p.setPen(QPen(QColor(0, 255, 255, 220), 3, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(left_edge, v_rect.top(), portrait_width, v_rect.height()))
+            
+            # Draw center guides
+            p.setPen(QPen(QColor(255, 255, 0, 180), 1, Qt.DotLine))
+            p.drawLine(int(v_rect.center().x()), int(v_rect.top()), 
+                      int(v_rect.center().x()), int(v_rect.bottom()))
+            p.drawLine(int(v_rect.left()), int(v_rect.center().y()),
+                      int(v_rect.right()), int(v_rect.center().y()))
+            
+            # Draw label
+            font = p.font()
+            font.setPointSize(10)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QPen(Qt.white, 1))
+            crop_percent = (portrait_width / v_rect.width()) * 100
+            label = f"Portrait Crop: {crop_percent:.1f}% width"
+            p.drawText(int(v_rect.center().x() - 100), int(v_rect.top() - 10), 200, 20,
+                      Qt.AlignCenter, label)
+        else:
+            # Portrait is taller than video: dim top and bottom
+            portrait_height = v_rect.width() / target_aspect
+            center_y = v_rect.center().y()
+            top_edge = center_y - (portrait_height / 2)
+            bottom_edge = center_y + (portrait_height / 2)
+            
+            # Ensure edges are within video rect
+            top_edge = max(v_rect.top(), top_edge)
+            bottom_edge = min(v_rect.bottom(), bottom_edge)
+            
+            # Draw top dimmed area
+            if top_edge > v_rect.top():
+                p.setBrush(QColor(0, 0, 0, 160))
+                p.setPen(Qt.NoPen)
+                p.drawRect(QRectF(v_rect.left(), v_rect.top(), v_rect.width(), top_edge - v_rect.top()))
+            
+            # Draw bottom dimmed area
+            if bottom_edge < v_rect.bottom():
+                p.setBrush(QColor(0, 0, 0, 160))
+                p.setPen(Qt.NoPen)
+                p.drawRect(QRectF(v_rect.left(), bottom_edge, v_rect.width(), v_rect.bottom() - bottom_edge))
+            
+            # Draw portrait area outline
+            p.setPen(QPen(QColor(0, 255, 255, 220), 3, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(v_rect.left(), top_edge, v_rect.width(), portrait_height))
+            
+            # Draw center guides
+            p.setPen(QPen(QColor(255, 255, 0, 180), 1, Qt.DotLine))
+            p.drawLine(int(v_rect.center().x()), int(v_rect.top()), 
+                      int(v_rect.center().x()), int(v_rect.bottom()))
+            p.drawLine(int(v_rect.left()), int(v_rect.center().y()),
+                      int(v_rect.right()), int(v_rect.center().y()))
+            
+            # Draw label
+            font = p.font()
+            font.setPointSize(10)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QPen(Qt.white, 1))
+            crop_percent = (portrait_height / v_rect.height()) * 100
+            label = f"Portrait Crop: {crop_percent:.1f}% height"
+            p.drawText(int(v_rect.center().x() - 100), int(v_rect.top() - 10), 200, 20,
+                      Qt.AlignCenter, label)
         p.restore()
 
     def draw_transform_controls(self, p, v_rect):

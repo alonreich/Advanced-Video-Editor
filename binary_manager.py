@@ -5,12 +5,24 @@ import subprocess
 
 class BinaryManager:
     _cached_encoder = None
+    _config = None
+
+    def __init__(self, config):
+        self.config = config
+        BinaryManager._config = config
+
+    def get_bin_path(self):
+        default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "binaries")
+        return self.config.get("binaries_path", default_path)
     @staticmethod
-    def get_bin_path():
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "binaries")
-    @staticmethod
-    def ensure_env():
-        bin_dir = BinaryManager.get_bin_path()
+    def get_bin_path_static():
+        default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "binaries")
+        if BinaryManager._config:
+            return BinaryManager._config.get("binaries_path", default_path)
+        return default_path
+
+    def ensure_env(self):
+        bin_dir = self.get_bin_path()
         logger = logging.getLogger("Advanced_Video_Editor")
         os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         os.environ["MPV_HOME"] = bin_dir
@@ -108,6 +120,6 @@ class BinaryManager:
     @staticmethod
     def get_executable(name):
         if os.name == 'nt' and not name.lower().endswith('.exe'): name += ".exe"
-        target = os.path.join(BinaryManager.get_bin_path(), name)
+        target = os.path.join(BinaryManager.get_bin_path_static(), name)
         if os.path.exists(target): return target
         return shutil.which(name) or name

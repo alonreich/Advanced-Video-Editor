@@ -87,7 +87,7 @@
 
 17. NATIVE LIBMPV-2 SUPPORT
     The system natively loads libmpv-2.dll without requiring legacy filename patching, 
-    compatible with updated MPV API structures.
+    compatible with updated MPV API structures. The project no longer clones mpv-1.dll.
 
 18. VERTICAL VIEW SYNCHRONIZATION
 
@@ -106,8 +106,17 @@
 # if there is a need to write more than 150-200 lines of code, it is fine, but should be devided into,
 # seperate multiple modules/classes/files in such way that each file is not longer than 150-200 lines of code all by itself.
 
+# UI/UX Rule of Thumb: All interactive UI elements (buttons, checkboxes, sliders, combo boxes,
+# media items, etc.) should display a hand cursor (Qt.PointingHandCursor) to indicate they are
+# clickable. This is implemented via a global application stylesheet in advanced_video_editor.py
+# that sets cursor: pointer for QPushButton, QToolButton, QCheckBox, QComboBox, QListWidget,
+# QSlider, QSpinBox, QDoubleSpinBox, QRadioButton, QTabBar::tab, QMenu::item, QAbstractButton,
+# QAbstractSpinBox, QScrollBar, and QHeaderView::section. This ensures a consistent and intuitive
+# user experience across the entire application.
+
 .
 ├── advanced_video_editor.py        # Entry point: System bootstrap & Global recovery hooks
+├── test_core_logic.py              # System sanity test: validates 30 core logic scenarios
 ├── core/                           # The "Engine Room"
 │   ├── binary_manager.py           # GPU detection (AV1/NVENC) & DLL environment setup
 │   ├── history.py                  # 50-depth Undo/Redo with Delta Compression
